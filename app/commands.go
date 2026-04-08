@@ -38,11 +38,12 @@ func (echo EchoCommand) Arity() int {
 	return 2
 }
 
-var internalmap map[string]string
+// var internalmap map[string]string
 
 // type Server struct {
 // 	store map[string]string
 // }
+	var internalmap = make(map[string]string)
 type SetCommand struct{
 }
 func (set SetCommand) Execute(args[] string) string{
