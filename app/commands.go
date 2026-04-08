@@ -45,7 +45,7 @@ func (echo EchoCommand) Arity() int {
 // type Server struct {
 // 	store map[string]string
 // }
-var internalmap = make(map[string]interanalState)
+var internalmap = make(map[string]internalState)
 
 type internalState struct{
 	value string
