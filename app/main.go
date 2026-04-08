@@ -36,13 +36,58 @@ func handleConnection(connection net.Conn) {
 	for {
 		buf := make([]byte, 1024)
 
-		_, err := connection.Read(buf)
+		n, err := connection.Read(buf)
 		if err != nil {
 			fmt.Println("Connection closed")
 			return
 		}
 
-		fmt.Println("Writing PONG response")
-		connection.Write([]byte("+PONG\r\n"))
+		command := parseRESP(buf[:n])
+
+		response := handleCommand(command)
+
+		connection.Write([]byte(response))
 	}
+}
+
+func parseRESP(data []byte) []string {
+	lines := strings.Split(string(data), "\r\n")
+
+	var result []string
+
+	for i := 0; i < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "$") {
+			length, _ := strconv.Atoi(lines[i][1:])
+			if length > 0 && i+1 < len(lines) {
+				result = append(result, lines[i+1])
+				i++
+			}
+		}
+	}
+
+	return result
+}
+
+func handleCommand(cmd []string) string {
+	if len(cmd) == 0 {
+		return ""
+	}
+
+	switch strings.ToUpper(cmd[0]) {
+
+	case "PING":
+		return "+PONG\r\n"
+
+	case "ECHO":
+		if len(cmd) < 2 {
+			return "-ERR wrong number of arguments\r\n"
+		}
+		return encodeBulkString(cmd[1])
+	}
+
+	return "-ERR unknown command\r\n"
+}
+
+func encodeBulkString(s string) string {
+	return fmt.Sprintf("$%d\r\n%s\r\n", len(s), s)
 }
