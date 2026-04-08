@@ -46,15 +46,16 @@ var internalmap map[string]string
 type SetCommand struct{
 }
 func (set SetCommand) Execute(args[] string) string{
-	internalmap[args[1]]=value
+	internalmap[args[1]]=args[2]
 	return "+OK\r\n"
 }
 type GetCommand struct{}
+
 func (get GetCommand) Execute(args [] string)string{
 	value, ok:=internalmap[args[1]]
 	if ok {
 		var response string 
-		fmt.Sprintf(response, "$%d\r\n%s\r\n", len(value),value) // RESP response type bulk string 
+		response=fmt.Sprintf("$%d\r\n%s\r\n", len(value),value) // RESP response type bulk string 
 		return response 
 	}else{
 		return "-1\r\n" // Null Bulk String :: special type
@@ -78,12 +79,12 @@ func handleCommand(args []string )string {
 	handler := commands[command]
 
 	if arityCmd, ok := handler.(ArityChecker); ok {
-		if len(cmd) != arityCmd.Arity() {
+		if len(args) != arityCmd.Arity() {
 			return "-ERR wrong number of arguments\r\n"
 		}
 	}
 
-	return handler.Execute(cmd)
+	// return handler.Execute(cmd)
 
 	return handler.Execute(args)
 }
