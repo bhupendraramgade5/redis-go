@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
+	"strconv"
 )
 
 // May be there is a method which doesnt require the use of arity in future
@@ -43,19 +45,43 @@ func (echo EchoCommand) Arity() int {
 // type Server struct {
 // 	store map[string]string
 // }
-	var internalmap = make(map[string]string)
+var internalmap = make(map[string]interanalState)
+
+type internalState struct{
+	value string
+	// timestamp time.Time
+	// timelimit time.Duration
+	expiresAt time.Time
+}
+
 type SetCommand struct{
 }
 func (set SetCommand) Execute(args[] string) string{
+	key := args[1]
+	value := args[2]
 
-	_, ok:=internalmap[args[1]]
-	if ok {
-		internalmap[args[1]]=args[2]
-	}else{
-		 // Null Bulk String :: special type
-		 internalmap[args[1]]=args[2]
+	var expiresAt time.Time
+
+	for i := 3; i < len(args); i++ {
+		switch strings.ToUpper(args[i]) {
+
+		case "EX":
+			seconds, _ := strconv.Atoi(args[i+1])
+			expiresAt = time.Now().Add(time.Duration(seconds) * time.Second)
+			i++
+
+		case "PX":
+			ms, _ := strconv.Atoi(args[i+1])
+			expiresAt = time.Now().Add(time.Duration(ms) * time.Millisecond)
+			i++
+		}
 	}
-	
+
+	internalmap[key] = internalState{
+		value: value,
+		expiresAt: expiresAt,
+	}
+
 	return "+OK\r\n"
 }
 type GetCommand struct{}
