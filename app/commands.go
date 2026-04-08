@@ -46,7 +46,15 @@ var internalmap map[string]string
 type SetCommand struct{
 }
 func (set SetCommand) Execute(args[] string) string{
-	internalmap[args[1]]=args[2]
+
+	_, ok:=internalmap[args[1]]
+	if ok {
+		internalmap[args[1]]=args[2]
+	}else{
+		 // Null Bulk String :: special type
+		 internalmap[args[1]]=args[2]
+	}
+	
 	return "+OK\r\n"
 }
 type GetCommand struct{}
