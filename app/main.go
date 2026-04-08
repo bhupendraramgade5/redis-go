@@ -22,6 +22,8 @@ func main() {
 		os.Exit(1)
 	}
 	_, err = l.Accept()
+	conn, err := l.Accept()
+	conn.Write([]byte("+PONG\r\n"))
 	if err != nil {
 		fmt.Println("Error accepting connection: ", err.Error())
 		os.Exit(1)
