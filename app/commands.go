@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	// "fmt"
 	"strings"
 	"time"
 	"strconv"
@@ -87,14 +87,19 @@ func (set SetCommand) Execute(args[] string) string{
 type GetCommand struct{}
 
 func (get GetCommand) Execute(args [] string)string{
-	value, ok:=internalmap[args[1]]
-	if ok {
-		var response string 
-		response=fmt.Sprintf("$%d\r\n%s\r\n", len(value),value) // RESP response type bulk string 
-		return response 
-	}else{
-		return "-1\r\n" // Null Bulk String :: special type
+	key := args[1]
+
+	state, ok := internalmap[key]
+	if !ok {
+		return "$-1\r\n"
 	}
+
+	if !state.expiresAt.IsZero() && time.Now().After(state.expiresAt) {
+		delete(internalmap, key)
+		return "$-1\r\n"
+	}
+
+	return encodeBulkString(state.value)
 }
 
 var commands = map[string]Command{
