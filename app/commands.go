@@ -41,7 +41,6 @@ func (echo EchoCommand) Arity() int {
 
 var internalmap = make(map[string]internalState)
 
-
 type internalState struct {
 	value     string
 	expiresAt time.Time
@@ -49,7 +48,6 @@ type internalState struct {
 
 type SetCommand struct {
 }
-
 
 func (set SetCommand) Execute(args []string) string {
 	key := args[1]
@@ -100,36 +98,35 @@ func (get GetCommand) Execute(args []string) string {
 
 var Rpushmap = make(map[string]variables)
 
-type variables struct{
-	listmembers []string 
+type variables struct {
+	listmembers []string
 }
 
 type RpushCommand struct{}
 
-func (rpush RpushCommand) Execute(args[] string) string{
-	key:=args[1]
+func (rpush RpushCommand) Execute(args []string) string {
+	key := args[1]
 	var temp variables
-	temp, ok :=Rpushmap[key]
+	temp, ok := Rpushmap[key]
 
-	if !ok{
-		temp=variables{}
+	if !ok {
+		temp = variables{}
 	}
 
-	for i:=2;i<len(args);i++{
-		temp.listmembers=append(temp.listmembers, args[i])
+	for i := 2; i < len(args); i++ {
+		temp.listmembers = append(temp.listmembers, args[i])
 	}
-	Rpushmap[key]=temp
-	response:=fmt.Sprintf(":%d\r\n",len(temp.listmembers))
+	Rpushmap[key] = temp
+	response := fmt.Sprintf(":%d\r\n", len(temp.listmembers))
 	return response
 }
 
 type LRangeCommand struct{}
 
-func (lrange LRangeCommand)Execute(args[] string) string{
-	key:=args[1]
-	lft,_:=strconv.Atoi(args[2])
-	rgt,_:=strconv.Atoi(args[3])
-	
+func (lrange LRangeCommand) Execute(args []string) string {
+	key := args[1]
+	lft, _ := strconv.Atoi(args[2])
+	rgt, _ := strconv.Atoi(args[3])
 
 	//Map Records : assignment and error handling
 	temp, ok := Rpushmap[key]
@@ -137,37 +134,37 @@ func (lrange LRangeCommand)Execute(args[] string) string{
 		return "*0\r\n"
 	}
 
-	size:=len(temp.listmembers)
-
+	size := len(temp.listmembers)
 
 	// negative indices handling
-	if lft<0{
-		lft=size+lft
+	if lft < 0 {
+		lft = size + lft
 	}
-	if rgt<0{
-		rgt=size+rgt
+	if rgt < 0 {
+		rgt = size + rgt
 	}
 
-	if lft>rgt || lft>=size {
+	if lft > rgt || lft >= size {
 		return "*0\r\n"
 	}
 
 	var builder strings.Builder
 
-	builder.WriteString(fmt.Sprintf("*%d\r\n",rgt-lft+1))
+	builder.WriteString(fmt.Sprintf("*%d\r\n", rgt-lft+1))
 	// response:=fmt.Sprintf()
-	for i:=lft;i<=rgt;i++{
-		builder.WriteString(fmt.Sprintf("%s$%d\r\n%s\r\n",response, len(temp.listmembers[i]), temp.listmembers[i]))
+	for i := lft; i <= rgt; i++ {
+		val := temp.listmembers[i]
+		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
 	}
 	return builder.String()
 }
 
 var commands = map[string]Command{
-	"PING": PingCommand{},
-	"ECHO": EchoCommand{},
-	"SET":  SetCommand{},
-	"GET":  GetCommand{},
-	"RPUSH" : RpushCommand{},
+	"PING":  PingCommand{},
+	"ECHO":  EchoCommand{},
+	"SET":   SetCommand{},
+	"GET":   GetCommand{},
+	"RPUSH": RpushCommand{},
 }
 
 func handleCommand(args []string) string {
