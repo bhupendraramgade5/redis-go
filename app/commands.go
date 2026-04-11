@@ -144,15 +144,15 @@ func (lrange LRangeCommand) Execute(args []string) string {
 		rgt = size + rgt
 	}
 
-	// if lft > rgt || lft >= size || rgt>=size {
-	// 	return "*0\r\n"
-	// }
+	if lft > rgt || lft >= size {
+		return "*0\r\n"
+	}
 
 	var builder strings.Builder
 
 	builder.WriteString(fmt.Sprintf("*%d\r\n", rgt-lft+1))
 	// response:=fmt.Sprintf()
-	for i := min(lft, rgt); i <=max(rgt,lft) && i<len(temp.listmembers); i++ {
+	for i := lft; i <=max(rgt,lft) && i<len(temp.listmembers); i++ {
 		val := temp.listmembers[i]
 		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
 	}
