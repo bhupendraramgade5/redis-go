@@ -104,8 +104,7 @@ type variables struct{
 	listmembers []string 
 }
 
-type RpushCommand struct{
-}
+type RpushCommand struct{}
 
 func (rpush RpushCommand) Execute(args[] string) string{
 	key:=args[1]
@@ -122,6 +121,45 @@ func (rpush RpushCommand) Execute(args[] string) string{
 	Rpushmap[key]=temp
 	response:=fmt.Sprintf(":%d\r\n",len(temp.listmembers))
 	return response
+}
+
+type LRangeCommand struct{}
+
+func (lrange LRangeCommand)Execute(args[] string) string{
+	key:=args[1]
+	lft,_:=strconv.Atoi(args[2])
+	rgt,_:=strconv.Atoi(args[3])
+	
+
+	//Map Records : assignment and error handling
+	temp, ok := Rpushmap[key]
+	if !ok {
+		return "*0\r\n"
+	}
+
+	size:=len(temp.listmembers)
+
+
+	// negative indices handling
+	if lft<0{
+		lft=size+lft
+	}
+	if rgt<0{
+		rgt=size+rgt
+	}
+
+	if lft>rgt || lft>=size {
+		return "*0\r\n"
+	}
+
+	var builder strings.Builder
+
+	builder.WriteString(fmt.Sprintf("*%d\r\n",rgt-lft+1))
+	// response:=fmt.Sprintf()
+	for i:=lft;i<=rgt;i++{
+		builder.WriteString(fmt.Sprintf("%s$%d\r\n%s\r\n",response, len(temp.listmembers[i]), temp.listmembers[i]))
+	}
+	return builder.String()
 }
 
 var commands = map[string]Command{
