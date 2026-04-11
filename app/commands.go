@@ -149,10 +149,11 @@ func (lrange LRangeCommand) Execute(args []string) string {
 	}
 
 	var builder strings.Builder
-
-	builder.WriteString(fmt.Sprintf("*%d\r\n", rgt-lft+1))
+	start:=lft
+	end:=min(rgt, len(temp.listmembers)-1)
+	builder.WriteString(fmt.Sprintf("*%d\r\n", end-start+1))
 	// response:=fmt.Sprintf()
-	for i := lft; i <=max(rgt,lft) && i<len(temp.listmembers); i++ {
+	for i := start; i <=end; i++ {
 		val := temp.listmembers[i]
 		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
 	}
