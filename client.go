@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -35,15 +36,14 @@ func main() {
 
 		conn.Write([]byte(resp))
 
-		response := readResponse(serverReader)
-		// fmt.Print(response)
+		response := readRESP(serverReader)
 
-		fmt.Print(parseResponse(response))
+		fmt.Print(response)
 	}
 }
 
 func encodeRESP(input string) string {
-	parts := strings.Split(input, " ")
+	parts := strings.Fields(input)
 
 	resp := fmt.Sprintf("*%d\r\n", len(parts))
 
@@ -54,43 +54,61 @@ func encodeRESP(input string) string {
 	return resp
 }
 
-func parseResponse(resp string) string {
+func readRESP(reader *bufio.Reader) string {
 
-	if strings.HasPrefix(resp, "+") {
-		return resp[1:]
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return ""
 	}
-
-	if strings.HasPrefix(resp, "$") {
-		return resp
-	}
-
-	return resp
-}
-
-func readResponse(reader *bufio.Reader) string {
-	line, _ := reader.ReadString('\n')
 
 	switch line[0] {
 
-	case '+':
+	case '+': // Simple string
 		return line[1:]
 
-	case '-':
+	case '-': // Error
 		return line
 
-	case '$':
-		var length int
-		fmt.Sscanf(line, "$%d", &length)
+	case ':': // Integer
+		return line
 
-		if length == -1 {
-			return "(nil)\n"
-		}
+	case '$': // Bulk string
+		return parseBulkString(reader, line)
 
-		data := make([]byte, length+2)
-		reader.Read(data)
-
-		return string(data[:length]) + "\n"
+	case '*': // Array
+		return parseArray(reader, line)
 	}
 
 	return line
+}
+
+func parseBulkString(reader *bufio.Reader, line string) string {
+
+	length, _ := strconv.Atoi(strings.TrimSpace(line[1:]))
+
+	if length == -1 {
+		return "(nil)\n"
+	}
+
+	data := make([]byte, length+2)
+	reader.Read(data)
+
+	return string(data[:length]) + "\n"
+}
+
+func parseArray(reader *bufio.Reader, line string) string {
+
+	count, _ := strconv.Atoi(strings.TrimSpace(line[1:]))
+
+	if count <= 0 {
+		return "(empty list)\n"
+	}
+
+	var builder strings.Builder
+
+	for i := 0; i < count; i++ {
+		builder.WriteString(readRESP(reader))
+	}
+
+	return builder.String()
 }
