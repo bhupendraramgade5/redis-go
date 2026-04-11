@@ -143,6 +143,16 @@ func (lrange LRangeCommand) Execute(args []string) string {
 	if rgt < 0 {
 		rgt = size + rgt%size
 	}
+	if lft < 0 {
+		lft = 0
+	}
+	if rgt < 0 {
+		return "*0\r\n"
+	}
+	if rgt >= size {
+		rgt = size - 1
+	}
+
 
 	if lft > rgt || lft >= size {
 		return "*0\r\n"
