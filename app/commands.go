@@ -165,6 +165,7 @@ var commands = map[string]Command{
 	"SET":   SetCommand{},
 	"GET":   GetCommand{},
 	"RPUSH": RpushCommand{},
+	"LRANGE":LRangeCommand{},
 }
 
 func handleCommand(args []string) string {
