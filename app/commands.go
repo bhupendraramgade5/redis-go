@@ -144,7 +144,7 @@ func (lrange LRangeCommand) Execute(args []string) string {
 		rgt = size + rgt
 	}
 
-	if lft > rgt || lft >= size {
+	if lft > rgt || lft >= size || rgt>=size {
 		return "*0\r\n"
 	}
 
