@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"honnef.co/go/tools/printf"
 )
 
 // May be there is a method which doesnt require the use of arity in future
