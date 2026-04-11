@@ -138,10 +138,10 @@ func (lrange LRangeCommand) Execute(args []string) string {
 
 	// negative indices handling
 	if lft < 0 {
-		lft = size + lft
+		lft = size + lft%size
 	}
 	if rgt < 0 {
-		rgt = size + rgt
+		rgt = size + rgt%size
 	}
 
 	if lft > rgt || lft >= size {
