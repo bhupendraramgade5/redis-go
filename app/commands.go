@@ -2,9 +2,12 @@ package main
 
 import (
 	// "fmt"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
+
+	"honnef.co/go/tools/printf"
 )
 
 // May be there is a method which doesnt require the use of arity in future
@@ -13,50 +16,44 @@ import (
 // thus by segregatin the interface we can now directky use the methods that we actually
 // need, and saving efforts in writing methods that are unneccesary
 
-type Command interface{
+type Command interface {
 	Execute(args []string) string
 }
 
-type ArityChecker interface{
+type ArityChecker interface {
 	Arity() int
 }
 
 // PingCommand
 type PingCommand struct{}
-func (ping PingCommand)  Execute(args []string) string {
+
+func (ping PingCommand) Execute(args []string) string {
 	return "+PONG\r\n"
 }
 
-
-
-//EchoCommand
+// EchoCommand
 type EchoCommand struct{}
 
-func (echo EchoCommand) Execute(args[] string) string{
-	return encodeBulkString(args[1])	
+func (echo EchoCommand) Execute(args []string) string {
+	return encodeBulkString(args[1])
 }
-
 func (echo EchoCommand) Arity() int {
 	return 2
 }
 
-// var internalmap map[string]string
-
-// type Server struct {
-// 	store map[string]string
-// }
 var internalmap = make(map[string]internalState)
 
-type internalState struct{
-	value string
-	// timestamp time.Time
-	// timelimit time.Duration
+
+type internalState struct {
+	value     string
 	expiresAt time.Time
 }
 
-type SetCommand struct{
+type SetCommand struct {
 }
-func (set SetCommand) Execute(args[] string) string{
+
+
+func (set SetCommand) Execute(args []string) string {
 	key := args[1]
 	value := args[2]
 
@@ -78,15 +75,16 @@ func (set SetCommand) Execute(args[] string) string{
 	}
 
 	internalmap[key] = internalState{
-		value: value,
+		value:     value,
 		expiresAt: expiresAt,
 	}
 
 	return "+OK\r\n"
 }
+
 type GetCommand struct{}
 
-func (get GetCommand) Execute(args [] string)string{
+func (get GetCommand) Execute(args []string) string {
 	key := args[1]
 
 	state, ok := internalmap[key]
@@ -102,20 +100,45 @@ func (get GetCommand) Execute(args [] string)string{
 	return encodeBulkString(state.value)
 }
 
+var Rpushmap = make(map[string]variables)
+
+type variables struct{
+	listmembers []string 
+}
+
+type RpushCommand struct{
+}
+
+func (rpush RpushCommand) Execute(args[] string) string{
+	key:=args[1]
+	var temp variables
+	temp, ok :=Rpushmap[key]
+
+	if !ok{
+		temp=variables{}
+	}
+
+	for i:=2;i<len(args);i++{
+		temp.listmembers=append(temp.listmembers, args[i])
+	}
+	Rpushmap[key]=temp
+	response:=fmt.Sprintf(":%d\r\n",len(temp.listmembers))
+	return response
+}
+
 var commands = map[string]Command{
 	"PING": PingCommand{},
 	"ECHO": EchoCommand{},
-	"SET": SetCommand{},
-	"GET" : GetCommand{},
+	"SET":  SetCommand{},
+	"GET":  GetCommand{},
+	"RPUSH" : RpushCommand{},
 }
 
-func handleCommand(args []string )string {
-	if len(args)==0 {
+func handleCommand(args []string) string {
+	if len(args) == 0 {
 		return "-ERR unknown command\r\n"
 	}
-	command:=strings.ToUpper(args[0])
-	// handler, ok:=commands[command]
-
+	command := strings.ToUpper(args[0])
 	handler := commands[command]
 
 	if arityCmd, ok := handler.(ArityChecker); ok {
@@ -123,8 +146,5 @@ func handleCommand(args []string )string {
 			return "-ERR wrong number of arguments\r\n"
 		}
 	}
-
-	// return handler.Execute(cmd)
-
 	return handler.Execute(args)
 }
