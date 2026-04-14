@@ -68,6 +68,10 @@ type LLenCommand struct{
 	Store *DataStore
 }
 
+type LPopCommand struct{
+	Store *DataStore
+}
+
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
 		"PING":  PingCommand{},
@@ -78,6 +82,7 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"LRANGE": LRangeCommand{Store: store},
 		"LPUSH": LPushCommand{Store: store},
 		"LLEN" : LLenCommand{Store : store},
+		"LPOP" :  LPopCommand{Store : store},
 	}
 }
 
@@ -188,6 +193,34 @@ func (lpush LPushCommand) Execute(args []string) string {
 
 	response := fmt.Sprintf(":%d\r\n", total)
 	return response
+}
+
+func (lpop LPopCommand) Execute(args []string) string {
+	key:=args[1]
+	temp, ok :=lpop.Store.Lists[key]
+
+	if !ok {
+		temp = variables{}
+	}
+
+	var popkey string
+	if len(temp.listleft)!=0 {
+		popkey=temp.listleft[len(temp.listleft)-1]
+		temp.listleft=temp.listleft[0:len(temp.listleft)-1]
+	}else if len(temp.listright)!=0 {
+		popkey=temp.listright[0]
+		temp.listright=temp.listright[1:]
+	}else{
+		return "$-1\r\n"
+	}
+
+	if len(temp.listleft) == 0 && len(temp.listright) == 0 {
+		delete(lpop.Store.Lists, key)
+	} else {
+		lpop.Store.Lists[key] = temp
+	}
+
+	return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey),popkey)
 }
 
 func (llen LLenCommand) Execute(args []string) string{
