@@ -31,6 +31,7 @@ type DataStore struct {
 	KV    map[string]internalState
 	Lists map[string]variables
 	Waiters map[string][]chan []string
+	DataStream map[string] []string
 	syncmut sync.Mutex
 }
 
@@ -39,6 +40,7 @@ func NewStore() *DataStore {
 		KV:    make(map[string]internalState),
 		Lists: make(map[string]variables),
 		Waiters: make(map[string][]chan []string),
+		DataStream: make(map[string] []string),
 	}
 }
 
@@ -83,6 +85,10 @@ type TYPECommand struct{
 	Store *DataStore
 }
 
+type XADDCommand struct {
+	Store *DataStore
+}
+
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
 		"PING":  PingCommand{},
@@ -96,6 +102,7 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"LPOP" :  LPopCommand{Store : store},
 		"BLPOP" : BLPopCommand{Store : store},
 		"TYPE" : TYPECommand{Store : store},
+		"XADD" : XADDCommand{Store : store},
 	}
 }
 
@@ -458,7 +465,27 @@ func (type_ TYPECommand) Execute(args []string) string {
 		return "+list\r\n"
 	}
 
+	if _, ok := type_.Store.DataStream[key]; ok {
+		return "+stream\r\n"
+	}
+	
 	return "+none\r\n"
+}
+
+func (xadd XADDCommand) Execute(args []string) string {
+	key := args[1]
+	id := args[2]
+
+	temp, ok := xadd.Store.DataStream[key]
+
+	if !ok {
+		temp = []string{}
+	}
+
+	temp= append(temp, args[2:]...)
+	xadd.Store.DataStream[key] = temp
+
+	return encodeSimpleString(id)
 }
 
 

@@ -27,3 +27,7 @@ func parseRESP(data []byte) []string {
 func encodeBulkString(s string) string {
 	return fmt.Sprintf("$%d\r\n%s\r\n", len(s), s)
 }
+
+func encodeSimpleString(s string) string {
+	return fmt.Sprintf("+%s\r\n", s)
+}
