@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"container/list"
 )
 
 // May be there is a method which doesnt require the use of arity in future
@@ -22,7 +23,8 @@ type internalState struct {
 }
 
 type variables struct {
-	listmembers []string
+	listleft []string
+	listright []string
 }
 
 type DataStore struct {
@@ -59,7 +61,9 @@ type RpushCommand struct {
 type LRangeCommand struct {
 	Store *DataStore
 }
-
+type LPushCommand struct {
+	Store *DataStore
+}
 
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
@@ -69,8 +73,9 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"GET":   GetCommand{Store: store},
 		"RPUSH": RpushCommand{Store: store},
 		"LRANGE": LRangeCommand{Store: store},
+		"LPUSH": LPushCommand{Store: store},
 	}
-}
+
 
 
 func (ping PingCommand) Execute(args []string) string {
@@ -139,7 +144,7 @@ func (get GetCommand) Execute(args []string) string {
 // var Rpushmap = make(map[string]variables)
 
 // type variables struct {
-// 	listmembers []string
+// 	listright []string
 // }
 
 func (rpush RpushCommand) Execute(args []string) string {
@@ -152,10 +157,12 @@ func (rpush RpushCommand) Execute(args []string) string {
 	}
 
 	for i := 2; i < len(args); i++ {
-		temp.listmembers = append(temp.listmembers, args[i])
+		temp.listright = append(temp.listright, args[i])
 	}
 	rpush.Store.Lists[key] = temp
-	response := fmt.Sprintf(":%d\r\n", len(temp.listmembers))
+	total := len(temp.listleft) + len(temp.listright)
+
+	response := fmt.Sprintf(":%d\r\n", len(temp.listright))
 	return response
 }
 
@@ -170,8 +177,13 @@ func (lrange LRangeCommand) Execute(args []string) string {
 		return "*0\r\n"
 	}
 
-	size := len(temp.listmembers)
-
+	combined := make([]string, 0)
+	for i := len(temp.listleft)-1; i >= 0; i-- {
+		combined = append(combined, temp.listleft[i])
+	}
+	combined = append(combined, temp.listright...)
+	
+	size := len(combined)
 	// negative indices handling
 	if lft < 0 {
 		lft = size + lft
@@ -194,15 +206,34 @@ func (lrange LRangeCommand) Execute(args []string) string {
 	}
 
 	var builder strings.Builder
+
 	start := lft
-	end := min(rgt, len(temp.listmembers)-1)
+	end := min(rgt, len(combined)-1)
 	builder.WriteString(fmt.Sprintf("*%d\r\n", end-start+1))
+
 	// response:=fmt.Sprintf()
 	for i := start; i <= end; i++ {
-		val := temp.listmembers[i]
+		val := combined[i]
 		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
 	}
 	return builder.String()
+}
+
+func (lpush LPushCommand) Execute(args []string) string {
+	key:=args[1]
+	temp, ok :=lpush.Store.Lists[key]
+
+	if !ok {
+		return "*0\r\n"
+	}
+	for i := 2; i < len(args); i++ {
+		temp.listleft = append(list.listleft, args[i])
+	}
+	lpush.Store.Lists[key] = temp
+	total := len(temp.listleft) + len(temp.listright)
+
+	response := fmt.Sprintf(":%d\r\n", len(temp.listleft))
+	return response
 }
 
 func handleCommand(registry map[string]Command, args []string) string {
@@ -219,3 +250,5 @@ func handleCommand(registry map[string]Command, args []string) string {
 	}
 	return handler.Execute(args)
 }
+
+
