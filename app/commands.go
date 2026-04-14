@@ -79,6 +79,9 @@ type BLPopCommand struct{
 type LPopCommand struct{
 	Store *DataStore
 }
+type TYPECommand struct{
+	Store *DataStore
+}
 
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
@@ -92,6 +95,7 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"LLEN" : LLenCommand{Store : store},
 		"LPOP" :  LPopCommand{Store : store},
 		"BLPOP" : BLPopCommand{Store : store},
+		"TYPE" : TYPECommand{Store : store},
 	}
 }
 
@@ -442,6 +446,21 @@ func (lrange LRangeCommand) Execute(args []string) string {
 	}
 	return builder.String()
 }
+
+func (type_ TYPECommand) Execute(args []string) string {
+	key := args[1]
+
+	if _, ok := type_.Store.KV[key]; ok {
+		return encodeBulkString("string")
+	}
+
+	if _, ok := type_.Store.Lists[key]; ok {
+		return encodeBulkString("list")
+	}
+
+	return encodeBulkString("none")
+}
+
 
 func handleCommand(registry map[string]Command, args []string) string {
 	if len(args) == 0 {
