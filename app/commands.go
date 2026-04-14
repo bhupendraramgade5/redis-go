@@ -197,21 +197,27 @@ func (lpush LPushCommand) Execute(args []string) string {
 
 func (lpop LPopCommand) Execute(args []string) string {
 	key:=args[1]
+	lft, _ := strconv.Atoi(args[2])
+
 	temp, ok :=lpop.Store.Lists[key]
 
 	if !ok {
 		temp = variables{}
 	}
 
-	var popkey string
-	if len(temp.listleft)!=0 {
-		popkey=temp.listleft[len(temp.listleft)-1]
-		temp.listleft=temp.listleft[0:len(temp.listleft)-1]
-	}else if len(temp.listright)!=0 {
-		popkey=temp.listright[0]
-		temp.listright=temp.listright[1:]
-	}else{
-		return "$-1\r\n"
+	var popkey []string
+	for i:=1;i<=lft;i++ {
+		if len(temp.listleft)!=0 {
+			popkey= append(popkey, temp.listleft[len(temp.listleft)-1])
+			temp.listleft=temp.listleft[0:len(temp.listleft)-1]
+		}else if len(temp.listright)!=0 {
+			popkey=append(popkey, temp.listright[0])
+			temp.listright=temp.listright[1:]
+		}else if len(popkey)==0{
+			return "$-1\r\n"
+		}else{
+			break;
+		}
 	}
 
 	if len(temp.listleft) == 0 && len(temp.listright) == 0 {
@@ -220,7 +226,19 @@ func (lpop LPopCommand) Execute(args []string) string {
 		lpop.Store.Lists[key] = temp
 	}
 
-	return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey),popkey)
+	var builder strings.Builder
+	if len(popkey)==1{
+		return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey[0]),popkey[0])
+	}else {
+		builder.WriteString(fmt.Sprintf("*%d\r\n", len(popkey)))
+	}
+	// response:=fmt.Sprintf()
+	for i := 0; i < len(popkey); i++ {
+		val := popkey[i]
+		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
+	}
+	return builder.String()
+	// return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey),popkey)
 }
 
 func (llen LLenCommand) Execute(args []string) string{
