@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,12 +30,15 @@ type variables struct {
 type DataStore struct {
 	KV    map[string]internalState
 	Lists map[string]variables
+	Waiters map[string][]chan []string
+	syncmut sync.Mutex
 }
 
 func NewStore() *DataStore {
 	return &DataStore{
 		KV:    make(map[string]internalState),
 		Lists: make(map[string]variables),
+		Waiters: make(map[string][]chan []string),
 	}
 }
 
@@ -68,6 +72,10 @@ type LLenCommand struct{
 	Store *DataStore
 }
 
+type BLPopCommand struct{
+	Store * DataStore
+}
+
 type LPopCommand struct{
 	Store *DataStore
 }
@@ -83,6 +91,7 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"LPUSH": LPushCommand{Store: store},
 		"LLEN" : LLenCommand{Store : store},
 		"LPOP" :  LPopCommand{Store : store},
+		"BLPOP" : BLPopCommand{Store : store},
 	}
 }
 
@@ -158,7 +167,24 @@ func (get GetCommand) Execute(args []string) string {
 
 func (rpush RpushCommand) Execute(args []string) string {
 	key := args[1]
-	var temp variables
+	rpush.Store.syncmut.Lock()
+
+	waiters := rpush.Store.Waiters[key]
+
+	if len(waiters) > 0 {
+		ch := waiters[0]
+		rpush.Store.Waiters[key] = waiters[1:]
+
+		val := args[2]
+
+		rpush.Store.syncmut.Unlock()
+
+		ch <- []string{key, val}
+
+		return fmt.Sprintf(":%d\r\n", 1)
+	}
+	
+	// var temp variables
 	temp, ok := rpush.Store.Lists[key]
 
 	if !ok {
@@ -171,6 +197,8 @@ func (rpush RpushCommand) Execute(args []string) string {
 	rpush.Store.Lists[key] = temp
 	total := len(temp.listleft) + len(temp.listright)
 
+	rpush.Store.syncmut.Unlock()
+
 	response := fmt.Sprintf(":%d\r\n", total)
 	return response
 }
@@ -178,7 +206,25 @@ func (rpush RpushCommand) Execute(args []string) string {
 
 func (lpush LPushCommand) Execute(args []string) string {
 	key:=args[1]
+	lpush.Store.syncmut.Lock()
+
+	waiters := lpush.Store.Waiters[key]
+
+	if len(waiters) > 0 {
+		ch := waiters[0]
+		lpush.Store.Waiters[key] = waiters[1:]
+
+		val := args[2]
+
+		lpush.Store.syncmut.Unlock()
+
+		ch <- []string{key, val}
+
+		return fmt.Sprintf(":%d\r\n", 1)
+	}
+
 	temp, ok :=lpush.Store.Lists[key]
+
 
 	if !ok {
 		temp = variables{}
@@ -191,6 +237,8 @@ func (lpush LPushCommand) Execute(args []string) string {
 	lpush.Store.Lists[key] = temp
 	total := len(temp.listleft) + len(temp.listright)
 
+
+	lpush.Store.syncmut.Unlock()
 	response := fmt.Sprintf(":%d\r\n", total)
 	return response
 }
@@ -205,11 +253,13 @@ func (lpop LPopCommand) Execute(args []string) string {
 	temp, ok :=lpop.Store.Lists[key]
 
 	if !ok {
-		temp = variables{}
+		return "$-1\r\n"
+		// temp = variables{}
 	}
 
-	var popkey []string
-	for i:=1;i<=lft;i++ {
+	// var popkey []string
+	popkey := make([]string, 0, lft)
+	for i := 0; i < lft; i++ {
 		if len(temp.listleft)!=0 {
 			popkey= append(popkey, temp.listleft[len(temp.listleft)-1])
 			temp.listleft=temp.listleft[0:len(temp.listleft)-1]
@@ -219,7 +269,7 @@ func (lpop LPopCommand) Execute(args []string) string {
 		}else if len(popkey)==0{
 			return "$-1\r\n"
 		}else{
-			break;
+			break
 		}
 	}
 
@@ -242,6 +292,89 @@ func (lpop LPopCommand) Execute(args []string) string {
 	}
 	return builder.String()
 	// return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey),popkey)
+}
+
+
+func (blpop BLPopCommand) Execute(args []string) string {
+	key := args[1]
+
+	timeout := 0.0
+	if len(args) > 2 {
+		timeout, _ = strconv.ParseFloat(args[2], 64)
+	}
+
+	blpop.Store.syncmut.Lock()
+
+	temp, ok := blpop.Store.Lists[key]
+
+	// immediate pop
+	if ok && (len(temp.listleft) != 0 || len(temp.listright) != 0) {
+		var val string
+
+		if len(temp.listleft) != 0 {
+			val = temp.listleft[len(temp.listleft)-1]
+			temp.listleft = temp.listleft[:len(temp.listleft)-1]
+		} else {
+			val = temp.listright[0]
+			temp.listright = temp.listright[1:]
+		}
+
+		blpop.Store.Lists[key] = temp
+		blpop.Store.syncmut.Unlock()
+
+		return encodeArray([]string{key, val})
+	}
+
+	ch := make(chan []string, 1)
+	blpop.Store.Waiters[key] = append(blpop.Store.Waiters[key], ch)
+
+	blpop.Store.syncmut.Unlock()
+
+	// Infinite wait
+	if timeout == 0 {
+		result := <-ch
+		return encodeArray(result)
+	}
+
+	// Timeout wait
+	select {
+	case result := <-ch:
+		return encodeArray(result)
+
+	case <-time.After(time.Duration(timeout * float64(time.Second))):
+
+		// REMOVE WAITER
+		blpop.Store.syncmut.Lock()
+
+		waiters := blpop.Store.Waiters[key]
+		for i, w := range waiters {
+			if w == ch {
+				blpop.Store.Waiters[key] =
+					append(waiters[:i], waiters[i+1:]...)
+				break
+			}
+		}
+
+		blpop.Store.syncmut.Unlock()
+
+		return "*-1\r\n"
+	}
+}
+
+func encodeArray(input []string) string {
+	var builder strings.Builder
+	if len(input)==0{
+		return "*-1\r\n"
+	}
+
+	builder.WriteString(fmt.Sprintf("*%d\r\n", len(input)))
+	
+	// response:=fmt.Sprintf()
+	for i := 0; i < len(input); i++ {
+		val := input[i]
+		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
+	}
+	return builder.String()
 }
 
 func (llen LLenCommand) Execute(args []string) string{
