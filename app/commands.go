@@ -64,6 +64,9 @@ type LRangeCommand struct {
 type LPushCommand struct {
 	Store *DataStore
 }
+type LLenCommand struct{
+	Store *DataStore
+}
 
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
@@ -74,6 +77,7 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"RPUSH": RpushCommand{Store: store},
 		"LRANGE": LRangeCommand{Store: store},
 		"LPUSH": LPushCommand{Store: store},
+		"LLEN" : LLenCommand{Store : store},
 	}
 }
 
@@ -178,7 +182,7 @@ func (lpush LPushCommand) Execute(args []string) string {
 	for i := 2; i < len(args); i++ {
 		temp.listleft = append(temp.listleft, args[i])
 	}
-	
+
 	lpush.Store.Lists[key] = temp
 	total := len(temp.listleft) + len(temp.listright)
 
@@ -186,6 +190,18 @@ func (lpush LPushCommand) Execute(args []string) string {
 	return response
 }
 
+func (llen LLenCommand) Execute(args []string) string{
+	key:=args[1]
+	temp, ok :=llen.Store.Lists[key]
+
+	if !ok {
+		temp = variables{}
+	}
+	total := len(temp.listleft) + len(temp.listright)
+
+	response := fmt.Sprintf(":%d\r\n", total)
+	return response
+}
 
 func (lrange LRangeCommand) Execute(args []string) string {
 	key := args[1]
