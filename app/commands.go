@@ -197,8 +197,11 @@ func (lpush LPushCommand) Execute(args []string) string {
 
 func (lpop LPopCommand) Execute(args []string) string {
 	key:=args[1]
-	lft, _ := strconv.Atoi(args[2])
-
+	var lft int =1
+	if len(args)>2 {
+		lft, _=strconv.Atoi(args[2])
+	}
+	
 	temp, ok :=lpop.Store.Lists[key]
 
 	if !ok {
