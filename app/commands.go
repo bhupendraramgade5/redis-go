@@ -166,6 +166,27 @@ func (rpush RpushCommand) Execute(args []string) string {
 	return response
 }
 
+
+func (lpush LPushCommand) Execute(args []string) string {
+	key:=args[1]
+	temp, ok :=lpush.Store.Lists[key]
+
+	if !ok {
+		temp = variables{}
+	}
+
+	for i := 2; i < len(args); i++ {
+		temp.listleft = append(temp.listleft, args[i])
+	}
+	
+	lpush.Store.Lists[key] = temp
+	total := len(temp.listleft) + len(temp.listright)
+
+	response := fmt.Sprintf(":%d\r\n", total)
+	return response
+}
+
+
 func (lrange LRangeCommand) Execute(args []string) string {
 	key := args[1]
 	lft, _ := strconv.Atoi(args[2])
@@ -217,23 +238,6 @@ func (lrange LRangeCommand) Execute(args []string) string {
 		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
 	}
 	return builder.String()
-}
-
-func (lpush LPushCommand) Execute(args []string) string {
-	key:=args[1]
-	temp, ok :=lpush.Store.Lists[key]
-
-	if !ok {
-		return "*0\r\n"
-	}
-	for i := 2; i < len(args); i++ {
-		temp.listleft = append(temp.listleft, args[i])
-	}
-	lpush.Store.Lists[key] = temp
-	total := len(temp.listleft) + len(temp.listright)
-
-	response := fmt.Sprintf(":%d\r\n", total)
-	return response
 }
 
 func handleCommand(registry map[string]Command, args []string) string {
