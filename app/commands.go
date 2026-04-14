@@ -451,14 +451,14 @@ func (type_ TYPECommand) Execute(args []string) string {
 	key := args[1]
 
 	if _, ok := type_.Store.KV[key]; ok {
-		return encodeBulkString("string")
+		return "+string\r\n"
 	}
 
 	if _, ok := type_.Store.Lists[key]; ok {
-		return encodeBulkString("list")
+		return "+list\r\n"
 	}
 
-	return encodeBulkString("none")
+	return "+none\r\n"
 }
 
 
