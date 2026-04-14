@@ -5,7 +5,7 @@ import (
 	"net"
 )
 
-func consumeListener(l net.Listener) {
+func consumeListener(l net.Listener, registry map[string]Command) {
 	for {
 		connection, err := l.Accept()
 
@@ -16,11 +16,11 @@ func consumeListener(l net.Listener) {
 			return
 		}
 
-		go handleConnection(connection)
+		go handleConnection(connection, registry)
 	}
 }
 
-func handleConnection(connection net.Conn) {
+func handleConnection(connection net.Conn, registry map[string]Command) {
 	for {
 		buf := make([]byte, 1024)
 
@@ -31,7 +31,7 @@ func handleConnection(connection net.Conn) {
 		}
 
 		command := parseRESP(buf[:n])
-		response := handleCommand(command)
+		response := handleCommand(registry, command)
 
 		connection.Write([]byte(response))
 	}

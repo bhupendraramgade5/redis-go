@@ -14,6 +14,29 @@ import (
 // thus by segregatin the interface we can now directky use the methods that we actually
 // need, and saving efforts in writing methods that are unneccesary
 
+var internalmap = make(map[string]internalState)
+
+type internalState struct {
+	value     string
+	expiresAt time.Time
+}
+
+type variables struct {
+	listmembers []string
+}
+
+type DataStore struct {
+	KV    map[string]internalState
+	Lists map[string]variables
+}
+
+func NewStore() *DataStore {
+	return &DataStore{
+		KV:    make(map[string]internalState),
+		Lists: make(map[string]variables),
+	}
+}
+
 type Command interface {
 	Execute(args []string) string
 }
@@ -22,15 +45,37 @@ type ArityChecker interface {
 	Arity() int
 }
 
-// PingCommand
 type PingCommand struct{}
+type EchoCommand struct{}
+type SetCommand struct {
+	Store *DataStore
+}
+type GetCommand struct {
+	Store *DataStore
+}
+type RpushCommand struct {
+	Store *DataStore
+}
+type LRangeCommand struct {
+	Store *DataStore
+}
+
+
+func NewRegistry(store *DataStore) map[string]Command {
+	return map[string]Command{
+		"PING":  PingCommand{},
+		"ECHO":  EchoCommand{},
+		"SET":   SetCommand{Store: store},
+		"GET":   GetCommand{Store: store},
+		"RPUSH": RpushCommand{Store: store},
+		"LRANGE": LRangeCommand{Store: store},
+	}
+}
+
 
 func (ping PingCommand) Execute(args []string) string {
 	return "+PONG\r\n"
 }
-
-// EchoCommand
-type EchoCommand struct{}
 
 func (echo EchoCommand) Execute(args []string) string {
 	return encodeBulkString(args[1])
@@ -39,15 +84,12 @@ func (echo EchoCommand) Arity() int {
 	return 2
 }
 
-var internalmap = make(map[string]internalState)
+// var internalmap = make(map[string]internalState)
 
-type internalState struct {
-	value     string
-	expiresAt time.Time
-}
-
-type SetCommand struct {
-}
+// type internalState struct {
+// 	value     string
+// 	expiresAt time.Time
+// }
 
 func (set SetCommand) Execute(args []string) string {
 	key := args[1]
@@ -70,7 +112,7 @@ func (set SetCommand) Execute(args []string) string {
 		}
 	}
 
-	internalmap[key] = internalState{
+	set.Store.KV[key] = internalState{
 		value:     value,
 		expiresAt: expiresAt,
 	}
@@ -78,12 +120,10 @@ func (set SetCommand) Execute(args []string) string {
 	return "+OK\r\n"
 }
 
-type GetCommand struct{}
-
 func (get GetCommand) Execute(args []string) string {
 	key := args[1]
 
-	state, ok := internalmap[key]
+	state, ok := get.Store.KV[key]
 	if !ok {
 		return "$-1\r\n"
 	}
@@ -96,18 +136,16 @@ func (get GetCommand) Execute(args []string) string {
 	return encodeBulkString(state.value)
 }
 
-var Rpushmap = make(map[string]variables)
+// var Rpushmap = make(map[string]variables)
 
-type variables struct {
-	listmembers []string
-}
-
-type RpushCommand struct{}
+// type variables struct {
+// 	listmembers []string
+// }
 
 func (rpush RpushCommand) Execute(args []string) string {
 	key := args[1]
 	var temp variables
-	temp, ok := Rpushmap[key]
+	temp, ok := rpush.Store.Lists[key]
 
 	if !ok {
 		temp = variables{}
@@ -116,12 +154,10 @@ func (rpush RpushCommand) Execute(args []string) string {
 	for i := 2; i < len(args); i++ {
 		temp.listmembers = append(temp.listmembers, args[i])
 	}
-	Rpushmap[key] = temp
+	rpush.Store.Lists[key] = temp
 	response := fmt.Sprintf(":%d\r\n", len(temp.listmembers))
 	return response
 }
-
-type LRangeCommand struct{}
 
 func (lrange LRangeCommand) Execute(args []string) string {
 	key := args[1]
@@ -129,7 +165,7 @@ func (lrange LRangeCommand) Execute(args []string) string {
 	rgt, _ := strconv.Atoi(args[3])
 
 	//Map Records : assignment and error handling
-	temp, ok := Rpushmap[key]
+	temp, ok := lrange.Store.Lists[key]
 	if !ok {
 		return "*0\r\n"
 	}
@@ -153,38 +189,28 @@ func (lrange LRangeCommand) Execute(args []string) string {
 		rgt = size - 1
 	}
 
-
 	if lft > rgt || lft >= size {
 		return "*0\r\n"
 	}
 
 	var builder strings.Builder
-	start:=lft
-	end:=min(rgt, len(temp.listmembers)-1)
+	start := lft
+	end := min(rgt, len(temp.listmembers)-1)
 	builder.WriteString(fmt.Sprintf("*%d\r\n", end-start+1))
 	// response:=fmt.Sprintf()
-	for i := start; i <=end; i++ {
+	for i := start; i <= end; i++ {
 		val := temp.listmembers[i]
 		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
 	}
 	return builder.String()
 }
 
-var commands = map[string]Command{
-	"PING":  PingCommand{},
-	"ECHO":  EchoCommand{},
-	"SET":   SetCommand{},
-	"GET":   GetCommand{},
-	"RPUSH": RpushCommand{},
-	"LRANGE":LRangeCommand{},
-}
-
-func handleCommand(args []string) string {
+func handleCommand(registry map[string]Command, args []string) string {
 	if len(args) == 0 {
 		return "-ERR unknown command\r\n"
 	}
 	command := strings.ToUpper(args[0])
-	handler := commands[command]
+	handler := registry[command]
 
 	if arityCmd, ok := handler.(ArityChecker); ok {
 		if len(args) != arityCmd.Arity() {
