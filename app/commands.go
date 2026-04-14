@@ -31,8 +31,21 @@ type DataStore struct {
 	KV    map[string]internalState
 	Lists map[string]variables
 	Waiters map[string][]chan []string
-	DataStream map[string] []string
+	DataStream map[string]*Stream
 	syncmut sync.Mutex
+
+}
+
+type StreamEntry struct {
+	ID string
+	Fields map[string]string
+}
+
+
+type Stream struct {
+	Entries []StreamEntry
+	TopId_time int64
+	TopId_seq int64
 }
 
 func NewStore() *DataStore {
@@ -40,7 +53,7 @@ func NewStore() *DataStore {
 		KV:    make(map[string]internalState),
 		Lists: make(map[string]variables),
 		Waiters: make(map[string][]chan []string),
-		DataStream: make(map[string] []string),
+		DataStream: make(map[string]*Stream),
 	}
 }
 
@@ -476,16 +489,66 @@ func (xadd XADDCommand) Execute(args []string) string {
 	key := args[1]
 	id := args[2]
 
-	temp, ok := xadd.Store.DataStream[key]
+	stream, ok := xadd.Store.DataStream[key]
 
 	if !ok {
-		temp = []string{}
+		stream = &Stream{}
+		xadd.Store.DataStream[key] = stream
+	}
+	ms, seq, err := parseID(id)
+	if err != nil {
+		return "-ERR Invalid stream ID\r\n"
 	}
 
-	temp= append(temp, args[2:]...)
-	xadd.Store.DataStream[key] = temp
+	if ms == 0 && seq == 0 {
+		return "-ERR The ID specified in XADD must be greater than 0-0\r\n"
+	}
+	if len(stream.Entries) > 0 {
+
+		if ms < stream.TopId_time {
+			return "-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
+		}
+
+		if ms == stream.TopId_time && seq <= stream.TopId_seq {
+			return "-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
+		}
+	}
+	fields := make(map[string]string)
+
+	for i := 3; i < len(args); i += 2 {
+		fields[args[i]] = args[i+1]
+	}
+
+	entry := StreamEntry{
+		ID:     id,
+		Fields: fields,
+	}
+
+	stream.Entries = append(stream.Entries, entry)
+
+	stream.TopId_time = ms
+	stream.TopId_seq = seq
 
 	return encodeBulkString(id)
+}
+
+func parseID(id string) (int64, int64, error) {
+	parts := strings.Split(id, "-")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid id")
+	}
+
+	ms, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	seq, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return ms, seq, nil
 }
 
 
