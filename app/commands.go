@@ -468,7 +468,7 @@ func (type_ TYPECommand) Execute(args []string) string {
 	if _, ok := type_.Store.DataStream[key]; ok {
 		return "+stream\r\n"
 	}
-	
+
 	return "+none\r\n"
 }
 
@@ -485,7 +485,7 @@ func (xadd XADDCommand) Execute(args []string) string {
 	temp= append(temp, args[2:]...)
 	xadd.Store.DataStream[key] = temp
 
-	return encodeSimpleString(id)
+	return encodeBulkString(id)
 }
 
 
