@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"container/list"
 )
 
 // May be there is a method which doesnt require the use of arity in future
@@ -48,6 +47,7 @@ type ArityChecker interface {
 }
 
 type PingCommand struct{}
+
 type EchoCommand struct{}
 type SetCommand struct {
 	Store *DataStore
@@ -75,7 +75,7 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"LRANGE": LRangeCommand{Store: store},
 		"LPUSH": LPushCommand{Store: store},
 	}
-
+}
 
 
 func (ping PingCommand) Execute(args []string) string {
@@ -162,7 +162,7 @@ func (rpush RpushCommand) Execute(args []string) string {
 	rpush.Store.Lists[key] = temp
 	total := len(temp.listleft) + len(temp.listright)
 
-	response := fmt.Sprintf(":%d\r\n", len(temp.listright))
+	response := fmt.Sprintf(":%d\r\n", total)
 	return response
 }
 
@@ -227,12 +227,12 @@ func (lpush LPushCommand) Execute(args []string) string {
 		return "*0\r\n"
 	}
 	for i := 2; i < len(args); i++ {
-		temp.listleft = append(list.listleft, args[i])
+		temp.listleft = append(temp.listleft, args[i])
 	}
 	lpush.Store.Lists[key] = temp
 	total := len(temp.listleft) + len(temp.listright)
 
-	response := fmt.Sprintf(":%d\r\n", len(temp.listleft))
+	response := fmt.Sprintf(":%d\r\n", total)
 	return response
 }
 
