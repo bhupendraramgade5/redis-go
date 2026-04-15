@@ -3,6 +3,7 @@ package main
 import (
 	// "fmt"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,36 +24,34 @@ type internalState struct {
 }
 
 type variables struct {
-	listleft []string
+	listleft  []string
 	listright []string
 }
 
 type DataStore struct {
-	KV    map[string]internalState
-	Lists map[string]variables
-	Waiters map[string][]chan []string
+	KV         map[string]internalState
+	Lists      map[string]variables
+	Waiters    map[string][]chan []string
 	DataStream map[string]*Stream
-	syncmut sync.Mutex
-
+	syncmut    sync.Mutex
 }
 
 type StreamEntry struct {
-	ID string
-	Fields map[string]string
+	ID     string
+	Fields [] string
 }
 
-
 type Stream struct {
-	Entries []StreamEntry
+	Entries    []StreamEntry
 	TopId_time int64
-	TopId_seq int64
+	TopId_seq  int64
 }
 
 func NewStore() *DataStore {
 	return &DataStore{
-		KV:    make(map[string]internalState),
-		Lists: make(map[string]variables),
-		Waiters: make(map[string][]chan []string),
+		KV:         make(map[string]internalState),
+		Lists:      make(map[string]variables),
+		Waiters:    make(map[string][]chan []string),
 		DataStream: make(map[string]*Stream),
 	}
 }
@@ -83,18 +82,18 @@ type LRangeCommand struct {
 type LPushCommand struct {
 	Store *DataStore
 }
-type LLenCommand struct{
+type LLenCommand struct {
 	Store *DataStore
 }
 
-type BLPopCommand struct{
-	Store * DataStore
-}
-
-type LPopCommand struct{
+type BLPopCommand struct {
 	Store *DataStore
 }
-type TYPECommand struct{
+
+type LPopCommand struct {
+	Store *DataStore
+}
+type TYPECommand struct {
 	Store *DataStore
 }
 
@@ -102,23 +101,27 @@ type XADDCommand struct {
 	Store *DataStore
 }
 
-func NewRegistry(store *DataStore) map[string]Command {
-	return map[string]Command{
-		"PING":  PingCommand{},
-		"ECHO":  EchoCommand{},
-		"SET":   SetCommand{Store: store},
-		"GET":   GetCommand{Store: store},
-		"RPUSH": RpushCommand{Store: store},
-		"LRANGE": LRangeCommand{Store: store},
-		"LPUSH": LPushCommand{Store: store},
-		"LLEN" : LLenCommand{Store : store},
-		"LPOP" :  LPopCommand{Store : store},
-		"BLPOP" : BLPopCommand{Store : store},
-		"TYPE" : TYPECommand{Store : store},
-		"XADD" : XADDCommand{Store : store},
-	}
+type XRANGECommand struct {
+	Store *DataStore
 }
 
+func NewRegistry(store *DataStore) map[string]Command {
+	return map[string]Command{
+		"PING":   PingCommand{},
+		"ECHO":   EchoCommand{},
+		"SET":    SetCommand{Store: store},
+		"GET":    GetCommand{Store: store},
+		"RPUSH":  RpushCommand{Store: store},
+		"LRANGE": LRangeCommand{Store: store},
+		"LPUSH":  LPushCommand{Store: store},
+		"LLEN":   LLenCommand{Store: store},
+		"LPOP":   LPopCommand{Store: store},
+		"BLPOP":  BLPopCommand{Store: store},
+		"TYPE":   TYPECommand{Store: store},
+		"XADD":   XADDCommand{Store: store},
+		"XRANGE": XRANGECommand{Store: store},
+	}
+}
 
 func (ping PingCommand) Execute(args []string) string {
 	return "+PONG\r\n"
@@ -207,7 +210,7 @@ func (rpush RpushCommand) Execute(args []string) string {
 
 		return fmt.Sprintf(":%d\r\n", 1)
 	}
-	
+
 	// var temp variables
 	temp, ok := rpush.Store.Lists[key]
 
@@ -227,9 +230,8 @@ func (rpush RpushCommand) Execute(args []string) string {
 	return response
 }
 
-
 func (lpush LPushCommand) Execute(args []string) string {
-	key:=args[1]
+	key := args[1]
 	lpush.Store.syncmut.Lock()
 
 	waiters := lpush.Store.Waiters[key]
@@ -247,8 +249,7 @@ func (lpush LPushCommand) Execute(args []string) string {
 		return fmt.Sprintf(":%d\r\n", 1)
 	}
 
-	temp, ok :=lpush.Store.Lists[key]
-
+	temp, ok := lpush.Store.Lists[key]
 
 	if !ok {
 		temp = variables{}
@@ -261,20 +262,19 @@ func (lpush LPushCommand) Execute(args []string) string {
 	lpush.Store.Lists[key] = temp
 	total := len(temp.listleft) + len(temp.listright)
 
-
 	lpush.Store.syncmut.Unlock()
 	response := fmt.Sprintf(":%d\r\n", total)
 	return response
 }
 
 func (lpop LPopCommand) Execute(args []string) string {
-	key:=args[1]
-	var lft int =1
-	if len(args)>2 {
-		lft, _=strconv.Atoi(args[2])
+	key := args[1]
+	var lft int = 1
+	if len(args) > 2 {
+		lft, _ = strconv.Atoi(args[2])
 	}
-	
-	temp, ok :=lpop.Store.Lists[key]
+
+	temp, ok := lpop.Store.Lists[key]
 
 	if !ok {
 		return "$-1\r\n"
@@ -284,15 +284,15 @@ func (lpop LPopCommand) Execute(args []string) string {
 	// var popkey []string
 	popkey := make([]string, 0, lft)
 	for i := 0; i < lft; i++ {
-		if len(temp.listleft)!=0 {
-			popkey= append(popkey, temp.listleft[len(temp.listleft)-1])
-			temp.listleft=temp.listleft[0:len(temp.listleft)-1]
-		}else if len(temp.listright)!=0 {
-			popkey=append(popkey, temp.listright[0])
-			temp.listright=temp.listright[1:]
-		}else if len(popkey)==0{
+		if len(temp.listleft) != 0 {
+			popkey = append(popkey, temp.listleft[len(temp.listleft)-1])
+			temp.listleft = temp.listleft[0 : len(temp.listleft)-1]
+		} else if len(temp.listright) != 0 {
+			popkey = append(popkey, temp.listright[0])
+			temp.listright = temp.listright[1:]
+		} else if len(popkey) == 0 {
 			return "$-1\r\n"
-		}else{
+		} else {
 			break
 		}
 	}
@@ -304,9 +304,9 @@ func (lpop LPopCommand) Execute(args []string) string {
 	}
 
 	var builder strings.Builder
-	if len(popkey)==1{
-		return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey[0]),popkey[0])
-	}else {
+	if len(popkey) == 1 {
+		return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey[0]), popkey[0])
+	} else {
 		builder.WriteString(fmt.Sprintf("*%d\r\n", len(popkey)))
 	}
 	// response:=fmt.Sprintf()
@@ -317,7 +317,6 @@ func (lpop LPopCommand) Execute(args []string) string {
 	return builder.String()
 	// return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey),popkey)
 }
-
 
 func (blpop BLPopCommand) Execute(args []string) string {
 	key := args[1]
@@ -387,12 +386,12 @@ func (blpop BLPopCommand) Execute(args []string) string {
 
 func encodeArray(input []string) string {
 	var builder strings.Builder
-	if len(input)==0{
+	if len(input) == 0 {
 		return "*-1\r\n"
 	}
 
 	builder.WriteString(fmt.Sprintf("*%d\r\n", len(input)))
-	
+
 	// response:=fmt.Sprintf()
 	for i := 0; i < len(input); i++ {
 		val := input[i]
@@ -401,9 +400,9 @@ func encodeArray(input []string) string {
 	return builder.String()
 }
 
-func (llen LLenCommand) Execute(args []string) string{
-	key:=args[1]
-	temp, ok :=llen.Store.Lists[key]
+func (llen LLenCommand) Execute(args []string) string {
+	key := args[1]
+	temp, ok := llen.Store.Lists[key]
 
 	if !ok {
 		temp = variables{}
@@ -426,11 +425,11 @@ func (lrange LRangeCommand) Execute(args []string) string {
 	}
 
 	combined := make([]string, 0)
-	for i := len(temp.listleft)-1; i >= 0; i-- {
+	for i := len(temp.listleft) - 1; i >= 0; i-- {
 		combined = append(combined, temp.listleft[i])
 	}
 	combined = append(combined, temp.listright...)
-	
+
 	size := len(combined)
 	// negative indices handling
 	if lft < 0 {
@@ -521,7 +520,7 @@ func (xadd XADDCommand) Execute(args []string) string {
 	if ms == 0 && seq == 0 {
 		return "-ERR The ID specified in XADD must be greater than 0-0\r\n"
 	}
-	
+
 	if len(stream.Entries) > 0 {
 
 		if ms < stream.TopId_time {
@@ -533,12 +532,12 @@ func (xadd XADDCommand) Execute(args []string) string {
 		}
 	}
 
-	
 	finalID := fmt.Sprintf("%d-%d", ms, seq)
-	fields := make(map[string]string)
+	fields := make([]string, 0)
 
-	for i := 3; i < len(args); i += 2 {
-		fields[args[i]] = args[i+1]
+	for i := 3; i < len(args); i++ {
+		// fields[args[i]] = args[i+1]
+		fields = append(fields, args[i])
 	}
 
 	entry := StreamEntry{
@@ -554,24 +553,23 @@ func (xadd XADDCommand) Execute(args []string) string {
 	return encodeBulkString(finalID)
 }
 
-
 func generateSeq(stream *Stream, ms int64) int64 {
-    if len(stream.Entries) == 0 {
-        if ms == 0 {
-            return 1
-        }
-        return 0
-    }
+	if len(stream.Entries) == 0 {
+		if ms == 0 {
+			return 1
+		}
+		return 0
+	}
 
-    if ms == stream.TopId_time {
-        return stream.TopId_seq + 1
-    }
+	if ms == stream.TopId_time {
+		return stream.TopId_seq + 1
+	}
 
-    if ms == 0 {
-        return 1
-    }
+	if ms == 0 {
+		return 1
+	}
 
-    return 0
+	return 0
 }
 
 func parseID(id string) (int64, int64, error) {
@@ -593,6 +591,82 @@ func parseID(id string) (int64, int64, error) {
 	return ms, seq, nil
 }
 
+func (xrange XRANGECommand) Execute(args []string) string {
+	key := args[1]
+	start := normalizeStartID(args[2])
+	end := normalizeEndID(args[3])
+
+	stream, ok := xrange.Store.DataStream[key]
+	if !ok {
+		return "*0\r\n"
+	}
+
+	var result []StreamEntry
+
+	for _, entry := range stream.Entries {
+		if compareIDs(entry.ID, start) >= 0 &&
+			compareIDs(entry.ID, end) <= 0 {
+			result = append(result, entry)
+		}
+	}
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("*%d\r\n", len(result)))
+
+	for _, entry := range result {
+		builder.WriteString("*2\r\n")
+
+		// ID
+		builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(entry.ID), entry.ID))
+
+		// Fields
+		builder.WriteString(fmt.Sprintf("*%d\r\n", len(entry.Fields)))
+
+		for _, val := range entry.Fields {
+			builder.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(val), val))
+		}
+	}
+
+	return builder.String()
+}
+
+func normalizeStartID(id string) string {
+	if id == "-" {
+		return "0-0"
+	}
+	if !strings.Contains(id, "-") {
+		return id + "-0"
+	}
+	return id
+}
+
+func normalizeEndID(id string) string {
+	if id == "+" {
+		return fmt.Sprintf("%d-%d", math.MaxInt64, math.MaxInt64)
+	}
+	if !strings.Contains(id, "-") {
+		return id + "-" + strconv.FormatInt(math.MaxInt64, 10) // max seq
+	}
+	return id
+}
+
+func compareIDs(id1, id2 string) int {
+	ms1, seq1, _ := parseID(id1)
+	ms2, seq2, _ := parseID(id2)
+	if ms1 < ms2 {
+		return -1
+	} else if ms1 > ms2 {
+		return 1
+	} else {
+		if seq1 < seq2 {
+			return -1
+		} else if seq1 > seq2 {
+			return 1
+		} else {
+			return 0
+		}
+	}
+}
 
 func handleCommand(registry map[string]Command, args []string) string {
 	if len(args) == 0 {
@@ -608,5 +682,3 @@ func handleCommand(registry map[string]Command, args []string) string {
 	}
 	return handler.Execute(args)
 }
-
-
