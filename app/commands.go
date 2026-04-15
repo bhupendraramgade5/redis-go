@@ -125,7 +125,7 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"TYPE":   TYPECommand{Store: store},
 		"XADD":   XADDCommand{Store: store},
 		"XRANGE": XRANGECommand{Store: store},
-		"XREAD":   XRANGECommand{Store: store}, // For simplicity, using XRANGE implementation for XREAD
+		"XREAD":   XREADCommand{Store: store}, // For simplicity, using XRANGE implementation for XREAD
 	}
 }
 
@@ -689,8 +689,13 @@ func compareIDs(id1, id2 string) int {
 // }
 
 func (cmd XREADCommand) Execute(args []string) string {
+
 	if len(args) < 4 {
 		return "-ERR wrong number of arguments\r\n"
+	}
+
+	if strings.ToUpper(args[1]) != "STREAMS" {
+		return "-ERR syntax error\r\n"
 	}
 
 	total := len(args) - 2
@@ -710,6 +715,10 @@ func (cmd XREADCommand) Execute(args []string) string {
 
 	for i := 0; i < n; i++ {
 		entries := xreadfunc(cmd.Store, keys[i], ids[i])
+
+		// 🔥 DEBUG HERE
+		// fmt.Println("Key:", keys[i], "Entries:", entries)
+
 		if len(entries) > 0 {
 			streamsData = append(streamsData, struct {
 				key     string
@@ -720,6 +729,8 @@ func (cmd XREADCommand) Execute(args []string) string {
 			})
 		}
 	}
+	fmt.Println("RAW RESP:")
+	fmt.Println(encodeMultiStream(streamsData))
 
 	return encodeMultiStream(streamsData)
 }
@@ -776,6 +787,7 @@ func encodeXRead(key string, entries []StreamEntry) string {
     return b.String()
 }
 
+
 func encodeMultiStream(data []struct {
 	key     string
 	entries []StreamEntry
@@ -787,6 +799,7 @@ func encodeMultiStream(data []struct {
 
 	var b strings.Builder
 
+	// outer array (streams)
 	b.WriteString(fmt.Sprintf("*%d\r\n", len(data)))
 
 	for _, stream := range data {
@@ -795,7 +808,7 @@ func encodeMultiStream(data []struct {
 		// key
 		b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(stream.key), stream.key))
 
-		// entries
+		// entries array
 		b.WriteString(fmt.Sprintf("*%d\r\n", len(stream.entries)))
 
 		for _, e := range stream.entries {
@@ -804,8 +817,9 @@ func encodeMultiStream(data []struct {
 			// ID
 			b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(e.ID), e.ID))
 
-			// fields
+			// fields array
 			b.WriteString(fmt.Sprintf("*%d\r\n", len(e.Fields)))
+
 			for _, f := range e.Fields {
 				b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f), f))
 			}
@@ -814,6 +828,8 @@ func encodeMultiStream(data []struct {
 
 	return b.String()
 }
+
+
 
 func handleCommand(registry map[string]Command, args []string) string {
 	if len(args) == 0 {
