@@ -517,9 +517,7 @@ func (xadd XADDCommand) Execute(args []string) string {
 		}
 	}
 
-	if ms == 0 && seq == 0 {
-		return "-ERR The ID specified in XADD must be greater than 0-0\r\n"
-	}
+	
 	if len(stream.Entries) > 0 {
 
 		if ms < stream.TopId_time {
@@ -529,6 +527,10 @@ func (xadd XADDCommand) Execute(args []string) string {
 		if ms == stream.TopId_time && seq <= stream.TopId_seq {
 			return "-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
 		}
+	}
+	
+	if ms == 0 && seq == 0 {
+		return "-ERR The ID specified in XADD must be greater than 0-0\r\n"
 	}
 	finalID := fmt.Sprintf("%d-%d", ms, seq)
 	fields := make(map[string]string)
