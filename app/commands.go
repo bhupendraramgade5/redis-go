@@ -39,6 +39,8 @@ type DataStore struct {
 type StreamEntry struct {
 	ID     string
 	Fields [] string
+	Time   int64
+	Seq    int64
 }
 
 type Stream struct {
@@ -104,6 +106,9 @@ type XADDCommand struct {
 type XRANGECommand struct {
 	Store *DataStore
 }
+type XREADCommand struct {
+	Store *DataStore
+}
 
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
@@ -120,6 +125,7 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"TYPE":   TYPECommand{Store: store},
 		"XADD":   XADDCommand{Store: store},
 		"XRANGE": XRANGECommand{Store: store},
+		"XREAD":   XRANGECommand{Store: store}, // For simplicity, using XRANGE implementation for XREAD
 	}
 }
 
@@ -666,6 +672,147 @@ func compareIDs(id1, id2 string) int {
 			return 0
 		}
 	}
+}
+
+// func (xread XREADCommand) Execute(args []string) string {
+// 	// For simplicity, using XRANGE implementation for XREAD
+
+// 	key := args[2]
+//     id := args[3]
+
+//     entries := xreadfunc(xread.Store, key, id)
+// 	if len(entries) == 0 {
+// 		return "*0\r\n"
+// 	}
+//     return encodeXRead(key, entries)
+// 	// return (XRANGECommand{Store: xread.Store}).Execute(args)
+// }
+
+func (cmd XREADCommand) Execute(args []string) string {
+	if len(args) < 4 {
+		return "-ERR wrong number of arguments\r\n"
+	}
+
+	total := len(args) - 2
+	if total%2 != 0 {
+		return "-ERR syntax error\r\n"
+	}
+
+	n := total / 2
+
+	keys := args[2 : 2+n]
+	ids  := args[2+n : 2+2*n]
+
+	var streamsData []struct {
+		key     string
+		entries []StreamEntry
+	}
+
+	for i := 0; i < n; i++ {
+		entries := xreadfunc(cmd.Store, keys[i], ids[i])
+		if len(entries) > 0 {
+			streamsData = append(streamsData, struct {
+				key     string
+				entries []StreamEntry
+			}{
+				key:     keys[i],
+				entries: entries,
+			})
+		}
+	}
+
+	return encodeMultiStream(streamsData)
+}
+
+func xreadfunc(store *DataStore, key string, lastID string) []StreamEntry {
+	stream, ok := store.DataStream[key]
+	if !ok {
+		return nil
+	}
+
+	var result []StreamEntry
+
+	for _, e := range stream.Entries {
+		if compareIDs(e.ID, lastID) > 0 { // important
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+func encodeXRead(key string, entries []StreamEntry) string {
+    if len(entries) == 0 {
+        return "*0\r\n"
+    }
+
+    var b strings.Builder
+
+    // 1 stream
+    b.WriteString("*1\r\n")
+
+    // [key, entries]
+    b.WriteString("*2\r\n")
+
+    // key
+    b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(key), key))
+
+    // entries array
+    b.WriteString(fmt.Sprintf("*%d\r\n", len(entries)))
+
+    for _, e := range entries {
+        b.WriteString("*2\r\n")
+
+        // ID
+        b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(e.ID), e.ID))
+
+        // fields
+        b.WriteString(fmt.Sprintf("*%d\r\n", len(e.Fields)))
+
+        for _, f := range e.Fields {
+            b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f), f))
+        }
+    }
+
+    return b.String()
+}
+
+func encodeMultiStream(data []struct {
+	key     string
+	entries []StreamEntry
+}) string {
+
+	if len(data) == 0 {
+		return "*0\r\n"
+	}
+
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("*%d\r\n", len(data)))
+
+	for _, stream := range data {
+		b.WriteString("*2\r\n")
+
+		// key
+		b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(stream.key), stream.key))
+
+		// entries
+		b.WriteString(fmt.Sprintf("*%d\r\n", len(stream.entries)))
+
+		for _, e := range stream.entries {
+			b.WriteString("*2\r\n")
+
+			// ID
+			b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(e.ID), e.ID))
+
+			// fields
+			b.WriteString(fmt.Sprintf("*%d\r\n", len(e.Fields)))
+			for _, f := range e.Fields {
+				b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f), f))
+			}
+		}
+	}
+
+	return b.String()
 }
 
 func handleCommand(registry map[string]Command, args []string) string {
