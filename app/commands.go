@@ -495,9 +495,26 @@ func (xadd XADDCommand) Execute(args []string) string {
 		stream = &Stream{}
 		xadd.Store.DataStream[key] = stream
 	}
-	ms, seq, err := parseID(id)
-	if err != nil {
-		return "-ERR Invalid stream ID\r\n"
+
+	var ms, seq int64
+	var err error
+
+	if id == "*" {
+		// ms = currentTimeMillis()
+		ms = time.Now().UnixMilli()
+		seq = generateSeq(stream, ms)
+	} else if strings.HasSuffix(id, "-*") {
+
+		parts := strings.Split(id, "-")
+		ms, err = strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return "-ERR Invalid stream ID\r\n"
+		}
+	} else {
+		ms, seq, err = parseID(id)
+		if err != nil {
+			return "-ERR Invalid stream ID\r\n"
+		}
 	}
 
 	if ms == 0 && seq == 0 {
@@ -513,6 +530,7 @@ func (xadd XADDCommand) Execute(args []string) string {
 			return "-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n"
 		}
 	}
+	finalID := fmt.Sprintf("%d-%d", ms, seq)
 	fields := make(map[string]string)
 
 	for i := 3; i < len(args); i += 2 {
@@ -520,7 +538,7 @@ func (xadd XADDCommand) Execute(args []string) string {
 	}
 
 	entry := StreamEntry{
-		ID:     id,
+		ID:     finalID,
 		Fields: fields,
 	}
 
@@ -529,7 +547,27 @@ func (xadd XADDCommand) Execute(args []string) string {
 	stream.TopId_time = ms
 	stream.TopId_seq = seq
 
-	return encodeBulkString(id)
+	return encodeBulkString(finalID)
+}
+
+
+func generateSeq(stream *Stream, ms int64) int64 {
+    if len(stream.Entries) == 0 {
+        if ms == 0 {
+            return 1
+        }
+        return 0
+    }
+
+    if ms == stream.TopId_time {
+        return stream.TopId_seq + 1
+    }
+
+    if ms == 0 {
+        return 1
+    }
+
+    return 0
 }
 
 func parseID(id string) (int64, int64, error) {
