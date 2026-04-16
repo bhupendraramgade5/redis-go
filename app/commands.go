@@ -720,7 +720,13 @@ func (cmd XREADCommand) Execute(args []string) string {
 	if strings.ToUpper(args[i]) == "BLOCK" {
 		block=true
 		ms, _:=strconv.Atoi(args[i+1])
-		timeout = time.Duration(ms)*time.Millisecond
+
+		if ms == 0 {
+			timeout = 0 // special case: infinite
+		} else {
+			timeout = time.Duration(ms) * time.Millisecond
+		}
+		// timeout = time.Duration(ms)*time.Millisecond
 		i+=2
 	}
 
@@ -741,6 +747,16 @@ func (cmd XREADCommand) Execute(args []string) string {
 	keys := args[i : i+n]
 	ids  := args[i+n : i+2*n]
 
+	for i := 0; i < n; i++ {
+		if ids[i] == "$" {
+			stream, ok := cmd.Store.DataStream[keys[i]]
+			if ok && len(stream.Entries) > 0 {
+				ids[i] = fmt.Sprintf("%d-%d", stream.TopId_time, stream.TopId_seq)
+			} else {
+				ids[i] = "0-0"
+			}
+		}
+	}
 	var streamsData []struct {
 		key     string
 		entries []StreamEntry
@@ -774,10 +790,11 @@ func (cmd XREADCommand) Execute(args []string) string {
 		cmd.Store.StreamWaiters[key] = append(cmd.Store.StreamWaiters[key], ch)
 	}
 	cmd.Store.syncmut.Unlock()
+	if timeout == 0 {
+		// infinite block
+		<-ch
 
-	select {
-	case <-ch:
-		// re-run read after wakeup
+		// re-read after wakeup
 		var newData []struct {
 			key     string
 			entries []StreamEntry
@@ -792,24 +809,44 @@ func (cmd XREADCommand) Execute(args []string) string {
 				}{keys[i], entries})
 			}
 		}
-
 		return encodeMultiStream(newData)
-		case <-time.After(timeout):
+	}else {	
+		select {
+		case <-ch:
+			// re-run read after wakeup
+			var newData []struct {
+				key     string
+				entries []StreamEntry
+			}
 
-		cmd.Store.syncmut.Lock()
-		for _, key := range keys {
-			waiters := cmd.Store.StreamWaiters[key]
-
-			var newList []chan struct{}
-			for _, w := range waiters {
-				if w != ch {
-					newList = append(newList, w)
+			for i := 0; i < n; i++ {
+				entries := xreadfunc(cmd.Store, keys[i], ids[i])
+				if len(entries) > 0 {
+					newData = append(newData, struct {
+						key     string
+						entries []StreamEntry
+					}{keys[i], entries})
 				}
 			}
-			cmd.Store.StreamWaiters[key] = newList
+
+			return encodeMultiStream(newData)
+			case <-time.After(timeout):
+
+			cmd.Store.syncmut.Lock()
+			for _, key := range keys {
+				waiters := cmd.Store.StreamWaiters[key]
+
+				var newList []chan struct{}
+				for _, w := range waiters {
+					if w != ch {
+						newList = append(newList, w)
+					}
+				}
+				cmd.Store.StreamWaiters[key] = newList
+			}
+			cmd.Store.syncmut.Unlock()
+			return "*-1\r\n"
 		}
-		cmd.Store.syncmut.Unlock()
-		return "*-1\r\n"
 	}
 
 	// fmt.Println("RAW RESP:")
