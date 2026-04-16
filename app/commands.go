@@ -809,13 +809,13 @@ func (cmd XREADCommand) Execute(args []string) string {
 			cmd.Store.StreamWaiters[key] = newList
 		}
 		cmd.Store.syncmut.Unlock()
-
+		return "*-1\r\n"
 	}
 
-	fmt.Println("RAW RESP:")
-	fmt.Println(encodeMultiStream(streamsData))
+	// fmt.Println("RAW RESP:")
+	// fmt.Println(encodeMultiStream(streamsData))
 
-	return encodeMultiStream(streamsData)
+	// return encodeMultiStream(streamsData)
 }
 
 func xreadfunc(store *DataStore, key string, lastID string) []StreamEntry {
