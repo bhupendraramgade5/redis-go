@@ -31,7 +31,8 @@ type variables struct {
 type DataStore struct {
 	KV         map[string]internalState
 	Lists      map[string]variables
-	Waiters    map[string][]chan []string
+	ListWaiters    map[string][]chan []string
+	StreamWaiters map[string][]chan struct{}
 	DataStream map[string]*Stream
 	syncmut    sync.Mutex
 }
@@ -53,7 +54,8 @@ func NewStore() *DataStore {
 	return &DataStore{
 		KV:         make(map[string]internalState),
 		Lists:      make(map[string]variables),
-		Waiters:    make(map[string][]chan []string),
+		ListWaiters:    make(map[string][]chan []string),
+		StreamWaiters: make(map[string][]chan struct{}),
 		DataStream: make(map[string]*Stream),
 	}
 }
@@ -202,11 +204,11 @@ func (rpush RpushCommand) Execute(args []string) string {
 	key := args[1]
 	rpush.Store.syncmut.Lock()
 
-	waiters := rpush.Store.Waiters[key]
+	waiters := rpush.Store.ListWaiters[key]
 
 	if len(waiters) > 0 {
 		ch := waiters[0]
-		rpush.Store.Waiters[key] = waiters[1:]
+		rpush.Store.ListWaiters[key] = waiters[1:]
 
 		val := args[2]
 
@@ -240,11 +242,11 @@ func (lpush LPushCommand) Execute(args []string) string {
 	key := args[1]
 	lpush.Store.syncmut.Lock()
 
-	waiters := lpush.Store.Waiters[key]
+	waiters := lpush.Store.ListWaiters[key]
 
 	if len(waiters) > 0 {
 		ch := waiters[0]
-		lpush.Store.Waiters[key] = waiters[1:]
+		lpush.Store.ListWaiters[key] = waiters[1:]
 
 		val := args[2]
 
@@ -355,7 +357,7 @@ func (blpop BLPopCommand) Execute(args []string) string {
 	}
 
 	ch := make(chan []string, 1)
-	blpop.Store.Waiters[key] = append(blpop.Store.Waiters[key], ch)
+	blpop.Store.ListWaiters[key] = append(blpop.Store.ListWaiters[key], ch)
 
 	blpop.Store.syncmut.Unlock()
 
@@ -375,10 +377,10 @@ func (blpop BLPopCommand) Execute(args []string) string {
 		// REMOVE WAITER
 		blpop.Store.syncmut.Lock()
 
-		waiters := blpop.Store.Waiters[key]
+		waiters := blpop.Store.ListWaiters[key]
 		for i, w := range waiters {
 			if w == ch {
-				blpop.Store.Waiters[key] =
+				blpop.Store.ListWaiters[key] =
 					append(waiters[:i], waiters[i+1:]...)
 				break
 			}
@@ -494,6 +496,13 @@ func (xadd XADDCommand) Execute(args []string) string {
 	key := args[1]
 	id := args[2]
 
+	if (len(args)-3)%2 != 0 {
+		return "-ERR wrong number of arguments\r\n"
+	}
+
+	xadd.Store.syncmut.Lock()
+	defer xadd.Store.syncmut.Unlock()
+
 	stream, ok := xadd.Store.DataStream[key]
 
 	if !ok {
@@ -552,9 +561,20 @@ func (xadd XADDCommand) Execute(args []string) string {
 	}
 
 	stream.Entries = append(stream.Entries, entry)
-
 	stream.TopId_time = ms
 	stream.TopId_seq = seq
+
+
+	waiters := append([]chan struct{}(nil), xadd.Store.StreamWaiters[key]...)
+
+	for _, ch := range waiters {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+
+	delete(xadd.Store.StreamWaiters, key)
 
 	return encodeBulkString(finalID)
 }
@@ -693,20 +713,33 @@ func (cmd XREADCommand) Execute(args []string) string {
 	if len(args) < 4 {
 		return "-ERR wrong number of arguments\r\n"
 	}
+	i:=1
+	block:=false
+	var timeout time.Duration
 
-	if strings.ToUpper(args[1]) != "STREAMS" {
-		return "-ERR syntax error\r\n"
+	if strings.ToUpper(args[i]) == "BLOCK" {
+		block=true
+		ms, _:=strconv.Atoi(args[i+1])
+		timeout = time.Duration(ms)*time.Millisecond
+		i+=2
 	}
 
-	total := len(args) - 2
+	if strings.ToUpper(args[i]) != "STREAMS" {
+		return "-ERR syntax error\r\n"
+	}
+	i++
+
+	// total := len(args) - 2
+	total := len(args) - i
+
 	if total%2 != 0 {
 		return "-ERR syntax error\r\n"
 	}
 
 	n := total / 2
 
-	keys := args[2 : 2+n]
-	ids  := args[2+n : 2+2*n]
+	keys := args[i : i+n]
+	ids  := args[i+n : i+2*n]
 
 	var streamsData []struct {
 		key     string
@@ -729,6 +762,56 @@ func (cmd XREADCommand) Execute(args []string) string {
 			})
 		}
 	}
+
+	if len(streamsData) > 0 || !block {
+		return encodeMultiStream(streamsData)
+	}
+
+	ch := make(chan struct{}, 1)
+
+	cmd.Store.syncmut.Lock()
+	for _, key := range keys {
+		cmd.Store.StreamWaiters[key] = append(cmd.Store.StreamWaiters[key], ch)
+	}
+	cmd.Store.syncmut.Unlock()
+
+	select {
+	case <-ch:
+		// re-run read after wakeup
+		var newData []struct {
+			key     string
+			entries []StreamEntry
+		}
+
+		for i := 0; i < n; i++ {
+			entries := xreadfunc(cmd.Store, keys[i], ids[i])
+			if len(entries) > 0 {
+				newData = append(newData, struct {
+					key     string
+					entries []StreamEntry
+				}{keys[i], entries})
+			}
+		}
+
+		return encodeMultiStream(newData)
+		case <-time.After(timeout):
+
+		cmd.Store.syncmut.Lock()
+		for _, key := range keys {
+			waiters := cmd.Store.StreamWaiters[key]
+
+			var newList []chan struct{}
+			for _, w := range waiters {
+				if w != ch {
+					newList = append(newList, w)
+				}
+			}
+			cmd.Store.StreamWaiters[key] = newList
+		}
+		cmd.Store.syncmut.Unlock()
+
+	}
+
 	fmt.Println("RAW RESP:")
 	fmt.Println(encodeMultiStream(streamsData))
 
