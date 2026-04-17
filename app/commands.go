@@ -223,12 +223,13 @@ func (incr INCRCommand) Execute(args[] string ) string{
 		return ":1\r\n"
 	}
 
-	num  , err := strconv.Atoi(key)
+	num,err := strconv.Atoi(state.value)
 	if err!=nil{
 		return "-ERR value is not an integer\r\n"
 	}
 
 	num++
+
 	state.value = strconv.Itoa(num)
 	incr.Store.KV[key]=state
 
