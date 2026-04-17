@@ -225,7 +225,8 @@ func (incr INCRCommand) Execute(args[] string ) string{
 
 	num,err := strconv.Atoi(state.value)
 	if err!=nil{
-		return "-ERR value is not an integer\r\n"
+		// return "-ERR value is not an integer\r\n"
+		return "-ERR value is not an integer or out of range\r\n"
 	}
 
 	num++
