@@ -16,7 +16,7 @@ import (
 // thus by segregatin the interface we can now directky use the methods that we actually
 // need, and saving efforts in writing methods that are unneccesary
 
-var internalmap = make(map[string]internalState)
+// var internalmap = make(map[string]internalState)
 
 type internalState struct {
 	value     string
@@ -112,6 +112,10 @@ type XREADCommand struct {
 	Store *DataStore
 }
 
+type INCRCommand struct{
+	Store* DataStore
+}
+
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
 		"PING":   PingCommand{},
@@ -127,7 +131,8 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"TYPE":   TYPECommand{Store: store},
 		"XADD":   XADDCommand{Store: store},
 		"XRANGE": XRANGECommand{Store: store},
-		"XREAD":   XREADCommand{Store: store}, // For simplicity, using XRANGE implementation for XREAD
+		"XREAD":   XREADCommand{Store: store}, 
+		"INCR" : INCRCommand{Store: store},
 	}
 }
 
@@ -187,11 +192,47 @@ func (get GetCommand) Execute(args []string) string {
 	}
 
 	if !state.expiresAt.IsZero() && time.Now().After(state.expiresAt) {
-		delete(internalmap, key)
+		// delete(internalmap, key)
+		delete(get.Store.KV, key)
 		return "$-1\r\n"
 	}
 
 	return encodeBulkString(state.value)
+}
+
+func (incr INCRCommand) Execute(args[] string ) string{
+	key:=args[1]
+	incr.Store.syncmut.Lock()
+	defer  incr.Store.syncmut.Unlock()
+
+	state, ok:= incr.Store.KV[key]
+
+	// Key doesnot exist: So adding the key and returning 
+	if !ok {
+		incr.Store.KV[key] = internalState{
+            value: "1",
+        }
+        return ":1\r\n"
+	}
+
+	if !state.expiresAt.IsZero() && time.Now().After(state.expiresAt){
+		delete(incr.Store.KV, key)
+		incr.Store.KV[key]=internalState{
+			value: "1",
+		}
+		return ":1\r\n"
+	}
+
+	num  , err := strconv.Atoi(key)
+	if err!=nil{
+		return "-ERR value is not an integer\r\n"
+	}
+
+	num++
+	state.value = strconv.Itoa(num)
+	incr.Store.KV[key]=state
+
+	return fmt.Sprintf(":%d\r\n", num)
 }
 
 // var Rpushmap = make(map[string]variables)
