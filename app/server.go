@@ -6,6 +6,7 @@ import (
 )
 
 func consumeListener(l net.Listener, registry map[string]Command) {
+	store := NewStore()
 	for {
 		connection, err := l.Accept()
 
@@ -16,13 +17,14 @@ func consumeListener(l net.Listener, registry map[string]Command) {
 			return
 		}
 
-		go handleConnection(connection, registry)
+		go handleConnection(connection, registry, store)
 	}
 }
 
-func handleConnection(connection net.Conn, registry map[string]Command) {
+func handleConnection(connection net.Conn, registry map[string]Command,  store *DataStore) {
 	client := &Client{
 					conn: connection,
+					store: store,
 					}
 
 	for {

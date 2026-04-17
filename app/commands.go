@@ -1005,6 +1005,7 @@ func encodeMultiStream(data []struct {
 type Client struct {
     conn net.Conn
     tx   *TxContext
+	store *DataStore  
 }
 
 type TxContext struct{
@@ -1017,8 +1018,13 @@ func executeDirect(registry map[string]Command, args []string) string{
 		return "-ERR unknown command\r\n"
 	}
 	command := strings.ToUpper(args[0])
-	handler := registry[command]
+	// handler := registry[command]
 
+	handler, ok := registry[command]
+	if !ok {
+    		return "-ERR unknown command\r\n"
+		}
+		
 	if arityCmd, ok := handler.(ArityChecker); ok {
 		if len(args) != arityCmd.Arity() {
 			return "-ERR wrong number of arguments\r\n"
@@ -1027,7 +1033,17 @@ func executeDirect(registry map[string]Command, args []string) string{
 	return handler.Execute(args)
 }
 
+func encodeEXECArray(input []string) string {
+	var builder strings.Builder
 
+	builder.WriteString(fmt.Sprintf("*%d\r\n", len(input)))
+
+	for _, val := range input {
+		builder.WriteString(val) // already RESP formatted
+	}
+
+	return builder.String()
+}
 
 func handleCommand(client *Client, registry map[string]Command, args []string) string {
     if len(args) == 0 {
@@ -1049,6 +1065,8 @@ func handleCommand(client *Client, registry map[string]Command, args []string) s
         if client.tx == nil {
             return "-ERR EXEC without MULTI\r\n"
         }
+		client.store.syncmut.Lock()   
+    	defer client.store.syncmut.Unlock()
 
         var responses []string
 
@@ -1058,7 +1076,7 @@ func handleCommand(client *Client, registry map[string]Command, args []string) s
 
         client.tx = nil
 
-        return encodeArray(responses)
+        return encodeEXECArray(responses)
 
     case "DISCARD":
         if client.tx == nil {
@@ -1071,7 +1089,7 @@ func handleCommand(client *Client, registry map[string]Command, args []string) s
     // If inside MULTI → queue instead of execute
     if client.tx != nil {
         client.tx.commandqueue = append(client.tx.commandqueue, args)
-        return "+OK\r\n"
+        return "+QUEUED\r\n"
     }
 
     return executeDirect(registry, args)
