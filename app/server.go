@@ -21,6 +21,10 @@ func consumeListener(l net.Listener, registry map[string]Command) {
 }
 
 func handleConnection(connection net.Conn, registry map[string]Command) {
+	client := &Client{
+					conn: connection,
+					}
+
 	for {
 		buf := make([]byte, 1024)
 
@@ -31,7 +35,7 @@ func handleConnection(connection net.Conn, registry map[string]Command) {
 		}
 
 		command := parseRESP(buf[:n])
-		response := handleCommand(registry, command)
+		response := handleCommand(client, registry, command)
 
 		connection.Write([]byte(response))
 	}

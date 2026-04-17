@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"net"
 )
 
 // May be there is a method which doesnt require the use of arity in future
@@ -49,6 +50,7 @@ type Stream struct {
 	TopId_time int64
 	TopId_seq  int64
 }
+
 
 func NewStore() *DataStore {
 	return &DataStore{
@@ -115,6 +117,9 @@ type XREADCommand struct {
 type INCRCommand struct{
 	Store* DataStore
 }
+// type MULTICommand struct {
+// 	Store* DataStore
+// }
 
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
@@ -133,6 +138,7 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"XRANGE": XRANGECommand{Store: store},
 		"XREAD":   XREADCommand{Store: store}, 
 		"INCR" : INCRCommand{Store: store},
+		// "MULTI" : MULTICommand{Store: store},
 	}
 }
 
@@ -992,9 +998,21 @@ func encodeMultiStream(data []struct {
 	return b.String()
 }
 
+// func  (multi MULTICommand) Execute(args[] string) string{
 
+// }
 
-func handleCommand(registry map[string]Command, args []string) string {
+type Client struct {
+    conn net.Conn
+    tx   *TxContext
+}
+
+type TxContext struct{
+	commandqueue [][]string
+}
+
+// func handleCommand(registry map[string]Command, args []string) string {
+func executeDirect(registry map[string]Command, args []string) string{
 	if len(args) == 0 {
 		return "-ERR unknown command\r\n"
 	}
@@ -1007,4 +1025,54 @@ func handleCommand(registry map[string]Command, args []string) string {
 		}
 	}
 	return handler.Execute(args)
+}
+
+
+
+func handleCommand(client *Client, registry map[string]Command, args []string) string {
+    if len(args) == 0 {
+        return "-ERR unknown command\r\n"
+    }
+
+    cmd := strings.ToUpper(args[0])
+
+    switch cmd {
+
+    case "MULTI":
+        if client.tx != nil {
+            return "-ERR MULTI calls can not be nested\r\n"
+        }
+        client.tx = &TxContext{}
+        return "+OK\r\n"
+
+    case "EXEC":
+        if client.tx == nil {
+            return "-ERR EXEC without MULTI\r\n"
+        }
+
+        var responses []string
+
+        for _, queued := range client.tx.commandqueue {
+            responses = append(responses, executeDirect(registry, queued))
+        }
+
+        client.tx = nil
+
+        return encodeArray(responses)
+
+    case "DISCARD":
+        if client.tx == nil {
+            return "-ERR DISCARD without MULTI\r\n"
+        }
+        client.tx = nil
+        return "+OK\r\n"
+    }
+
+    // If inside MULTI → queue instead of execute
+    if client.tx != nil {
+        client.tx.commandqueue = append(client.tx.commandqueue, args)
+        return "+OK\r\n"
+    }
+
+    return executeDirect(registry, args)
 }
