@@ -21,24 +21,30 @@ func consumeListener(l net.Listener, registry map[string]Command) {
 	}
 }
 
-func handleConnection(connection net.Conn, registry map[string]Command,  store *DataStore) {
+func handleConnection(connection net.Conn, registry map[string]Command, store *DataStore) {
+
 	client := &Client{
-					conn: connection,
-					store: store,
-					}
-
+		conn:  connection,
+		store: store,
+	}
+	var buffer []byte // 🔥 persistent buffer
+	fmt.Println("CLIENT PTR:", client)
 	for {
-		buf := make([]byte, 1024)
+		fmt.Println("CLIENT PTR:", client)
 
-		n, err := connection.Read(buf)
-		if err != nil {
-			fmt.Println("Connection closed")
-			return
+		temp := make([]byte, 1024)
+		n, _ := connection.Read(temp)
+		// if err != nil {
+		//     return
+		// }
+		buffer = append(buffer, temp[:n]...)
+
+		commands, remaining := parseRESP(buffer)
+		buffer = remaining // keep leftover
+
+		for _, cmd := range commands {
+			response := handleCommand(client, registry, cmd)
+			connection.Write([]byte(response))
 		}
-
-		command := parseRESP(buf[:n])
-		response := handleCommand(client, registry, command)
-
-		connection.Write([]byte(response))
 	}
 }

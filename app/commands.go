@@ -59,7 +59,7 @@ func NewStore() *DataStore {
 		ListWaiters:   make(map[string][]chan []string),
 		StreamWaiters: make(map[string][]chan struct{}),
 		DataStream:    make(map[string]*Stream),
-		keyVersion: make(map[string]int64),
+		keyVersion:    make(map[string]int64),
 	}
 }
 
@@ -123,7 +123,6 @@ type INCRCommand struct {
 //		Store* DataStore
 //	}
 
-
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
 		"PING":   PingCommand{},
@@ -168,6 +167,8 @@ func (set SetCommand) Execute(args []string) string {
 	key := args[1]
 	value := args[2]
 
+	set.Store.syncmut.Lock()
+	defer set.Store.syncmut.Unlock()
 	var expiresAt time.Time
 
 	for i := 3; i < len(args); i++ {
@@ -189,6 +190,8 @@ func (set SetCommand) Execute(args []string) string {
 		value:     value,
 		expiresAt: expiresAt,
 	}
+	fmt.Println("SetCommand : Check", set.Store.KV[key], set.Store.keyVersion[key])
+	fmt.Printf("key = [%s]\n", key)
 	set.Store.keyVersion[key]++
 
 	return "+OK\r\n"
@@ -197,6 +200,8 @@ func (set SetCommand) Execute(args []string) string {
 func (get GetCommand) Execute(args []string) string {
 	key := args[1]
 
+	get.Store.syncmut.Lock()
+	defer get.Store.syncmut.Unlock()
 	state, ok := get.Store.KV[key]
 	if !ok {
 		return "$-1\r\n"
@@ -208,7 +213,6 @@ func (get GetCommand) Execute(args []string) string {
 		get.Store.keyVersion[key]++
 		return "$-1\r\n"
 	}
-
 
 	return encodeBulkString(state.value)
 }
@@ -233,6 +237,7 @@ func (incr INCRCommand) Execute(args []string) string {
 		incr.Store.KV[key] = internalState{
 			value: "1",
 		}
+		incr.Store.keyVersion[key]++
 		return ":1\r\n"
 	}
 
@@ -249,26 +254,6 @@ func (incr INCRCommand) Execute(args []string) string {
 	incr.Store.keyVersion[key]++
 
 	return fmt.Sprintf(":%d\r\n", num)
-}
-
-func (w WATCHCommand) Execute(args []string) string {
-	if w.Client.tx != nil {
-		return "-ERR WATCH inside MULTI is not allowed\r\n"
-	}
-
-	if w.Client.watched == nil {
-		w.Client.watched = make(map[string]int64)
-	}
-
-	w.Store.syncmut.Lock()
-	defer w.Store.syncmut.Unlock()
-
-	for i := 1; i < len(args); i++ {
-		key := args[i]
-		w.Client.watched[key] = w.Store.keyVersion[key]
-	}
-
-	return "+OK\r\n"
 }
 
 // var Rpushmap = make(map[string]variables)
@@ -359,7 +344,7 @@ func (lpop LPopCommand) Execute(args []string) string {
 
 	// lpop.Store.syncmut.Lock()
 	lpop.Store.syncmut.Lock()
-    defer lpop.Store.syncmut.Unlock()
+	defer lpop.Store.syncmut.Unlock()
 
 	var lft int = 1
 	if len(args) > 2 {
@@ -397,7 +382,7 @@ func (lpop LPopCommand) Execute(args []string) string {
 
 	lpop.Store.keyVersion[key]++
 	// lpop.Store.syncmut.Unlock()
-	
+
 	var builder strings.Builder
 	if len(popkey) == 1 {
 		return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey[0]), popkey[0])
@@ -1055,6 +1040,8 @@ func executeDirect(registry map[string]Command, args []string) string {
 		return "-ERR unknown command\r\n"
 	}
 	command := strings.ToUpper(args[0])
+	fmt.Println("PARSED command:", command)
+	fmt.Println("Debug :", "Parsed Args : ", args)
 	// handler := registry[command]
 
 	handler, ok := registry[command]
@@ -1089,24 +1076,41 @@ func handleCommand(client *Client, registry map[string]Command, args []string) s
 
 	cmd := strings.ToUpper(args[0])
 
+	fmt.Println("PARSED CMD:", cmd)
+	fmt.Println("PARSED ARGS:", args)
+
 	switch cmd {
 
 	case "MULTI":
+		fmt.Println("Debug :", cmd)
+
 		if client.tx != nil {
 			return "-ERR MULTI calls can not be nested\r\n"
 		}
 		client.tx = &TxContext{}
+
 		return "+OK\r\n"
 
 	case "EXEC":
 		if client.tx == nil {
 			return "-ERR EXEC without MULTI\r\n"
 		}
+		fmt.Println("Debug :", cmd)
+
+		// fmt.Println("---- EXEC DEBUG ----")
+		for key, version := range client.watched {
+			fmt.Println(
+				"Key:", key,
+				"Expected:", version,
+				"Actual:", client.store.keyVersion[key],
+			)
+		}
 		client.store.syncmut.Lock()
 		defer client.store.syncmut.Unlock()
 
 		for key, version := range client.watched {
 			if client.store.keyVersion[key] != version {
+				fmt.Println("Debug : ", client.store.keyVersion[key], version)
 				client.tx = nil
 				client.watched = nil
 				return "*-1\r\n" // abort transaction
@@ -1124,28 +1128,37 @@ func handleCommand(client *Client, registry map[string]Command, args []string) s
 		return encodeEXECArray(responses)
 
 	case "DISCARD":
+		fmt.Println("Debug :", cmd)
+
 		if client.tx == nil {
 			return "-ERR DISCARD without MULTI\r\n"
 		}
 		client.watched = nil
 		client.tx = nil
 		return "+OK\r\n"
-	
+
 	case "WATCH":
+		fmt.Println("Debug :", cmd)
+
+		client.store.syncmut.Lock()
+		defer client.store.syncmut.Unlock()
+
 		if client.tx != nil {
 			return "-ERR WATCH inside MULTI is not allowed\r\n"
 		}
 
 		if client.watched == nil {
 			client.watched = make(map[string]int64)
+			fmt.Println("Debug :", "client.watched:-", client.watched)
 		}
-
-		client.store.syncmut.Lock()
-		defer client.store.syncmut.Unlock()
 
 		for i := 1; i < len(args); i++ {
 			key := args[i]
 			client.watched[key] = client.store.keyVersion[key]
+			fmt.Println("WATCH SET:", key, client.watched[key])
+
+			fmt.Println("Debug: ", "client.store.keyVersion[key]:-", client.store.keyVersion[key])
+			fmt.Println("Debug :", "client.watched:-", client.watched[key])
 		}
 		return "+OK\r\n"
 	case "UNWATCH":
