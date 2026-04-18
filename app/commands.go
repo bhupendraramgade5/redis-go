@@ -4,11 +4,11 @@ import (
 	// "fmt"
 	"fmt"
 	"math"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"net"
 )
 
 // May be there is a method which doesnt require the use of arity in future
@@ -30,17 +30,18 @@ type variables struct {
 }
 
 type DataStore struct {
-	KV         map[string]internalState
-	Lists      map[string]variables
-	ListWaiters    map[string][]chan []string
+	KV            map[string]internalState
+	Lists         map[string]variables
+	ListWaiters   map[string][]chan []string
 	StreamWaiters map[string][]chan struct{}
-	DataStream map[string]*Stream
-	syncmut    sync.Mutex
+	DataStream    map[string]*Stream
+	keyVersion    map[string]int64
+	syncmut       sync.Mutex
 }
 
 type StreamEntry struct {
 	ID     string
-	Fields [] string
+	Fields []string
 	Time   int64
 	Seq    int64
 }
@@ -51,14 +52,14 @@ type Stream struct {
 	TopId_seq  int64
 }
 
-
 func NewStore() *DataStore {
 	return &DataStore{
-		KV:         make(map[string]internalState),
-		Lists:      make(map[string]variables),
-		ListWaiters:    make(map[string][]chan []string),
+		KV:            make(map[string]internalState),
+		Lists:         make(map[string]variables),
+		ListWaiters:   make(map[string][]chan []string),
 		StreamWaiters: make(map[string][]chan struct{}),
-		DataStream: make(map[string]*Stream),
+		DataStream:    make(map[string]*Stream),
+		keyVersion: make(map[string]int64),
 	}
 }
 
@@ -114,12 +115,14 @@ type XREADCommand struct {
 	Store *DataStore
 }
 
-type INCRCommand struct{
-	Store* DataStore
+type INCRCommand struct {
+	Store *DataStore
 }
-// type MULTICommand struct {
-// 	Store* DataStore
-// }
+
+//	type MULTICommand struct {
+//		Store* DataStore
+//	}
+
 
 func NewRegistry(store *DataStore) map[string]Command {
 	return map[string]Command{
@@ -136,8 +139,9 @@ func NewRegistry(store *DataStore) map[string]Command {
 		"TYPE":   TYPECommand{Store: store},
 		"XADD":   XADDCommand{Store: store},
 		"XRANGE": XRANGECommand{Store: store},
-		"XREAD":   XREADCommand{Store: store}, 
-		"INCR" : INCRCommand{Store: store},
+		"XREAD":  XREADCommand{Store: store},
+		"INCR":   INCRCommand{Store: store},
+		// "WATCH": WATCHCommand{Store: store},
 		// "MULTI" : MULTICommand{Store: store},
 	}
 }
@@ -185,6 +189,7 @@ func (set SetCommand) Execute(args []string) string {
 		value:     value,
 		expiresAt: expiresAt,
 	}
+	set.Store.keyVersion[key]++
 
 	return "+OK\r\n"
 }
@@ -200,37 +205,39 @@ func (get GetCommand) Execute(args []string) string {
 	if !state.expiresAt.IsZero() && time.Now().After(state.expiresAt) {
 		// delete(internalmap, key)
 		delete(get.Store.KV, key)
+		get.Store.keyVersion[key]++
 		return "$-1\r\n"
 	}
+
 
 	return encodeBulkString(state.value)
 }
 
-func (incr INCRCommand) Execute(args[] string ) string{
-	key:=args[1]
+func (incr INCRCommand) Execute(args []string) string {
+	key := args[1]
 	incr.Store.syncmut.Lock()
-	defer  incr.Store.syncmut.Unlock()
+	defer incr.Store.syncmut.Unlock()
 
-	state, ok:= incr.Store.KV[key]
+	state, ok := incr.Store.KV[key]
 
-	// Key doesnot exist: So adding the key and returning 
+	// Key doesnot exist: So adding the key and returning
 	if !ok {
 		incr.Store.KV[key] = internalState{
-            value: "1",
-        }
-        return ":1\r\n"
-	}
-
-	if !state.expiresAt.IsZero() && time.Now().After(state.expiresAt){
-		delete(incr.Store.KV, key)
-		incr.Store.KV[key]=internalState{
 			value: "1",
 		}
 		return ":1\r\n"
 	}
 
-	num,err := strconv.Atoi(state.value)
-	if err!=nil{
+	if !state.expiresAt.IsZero() && time.Now().After(state.expiresAt) {
+		delete(incr.Store.KV, key)
+		incr.Store.KV[key] = internalState{
+			value: "1",
+		}
+		return ":1\r\n"
+	}
+
+	num, err := strconv.Atoi(state.value)
+	if err != nil {
 		// return "-ERR value is not an integer\r\n"
 		return "-ERR value is not an integer or out of range\r\n"
 	}
@@ -238,9 +245,30 @@ func (incr INCRCommand) Execute(args[] string ) string{
 	num++
 
 	state.value = strconv.Itoa(num)
-	incr.Store.KV[key]=state
+	incr.Store.KV[key] = state
+	incr.Store.keyVersion[key]++
 
 	return fmt.Sprintf(":%d\r\n", num)
+}
+
+func (w WATCHCommand) Execute(args []string) string {
+	if w.Client.tx != nil {
+		return "-ERR WATCH inside MULTI is not allowed\r\n"
+	}
+
+	if w.Client.watched == nil {
+		w.Client.watched = make(map[string]int64)
+	}
+
+	w.Store.syncmut.Lock()
+	defer w.Store.syncmut.Unlock()
+
+	for i := 1; i < len(args); i++ {
+		key := args[i]
+		w.Client.watched[key] = w.Store.keyVersion[key]
+	}
+
+	return "+OK\r\n"
 }
 
 // var Rpushmap = make(map[string]variables)
@@ -279,6 +307,7 @@ func (rpush RpushCommand) Execute(args []string) string {
 		temp.listright = append(temp.listright, args[i])
 	}
 	rpush.Store.Lists[key] = temp
+	rpush.Store.keyVersion[key]++
 	total := len(temp.listleft) + len(temp.listright)
 
 	rpush.Store.syncmut.Unlock()
@@ -317,6 +346,7 @@ func (lpush LPushCommand) Execute(args []string) string {
 	}
 
 	lpush.Store.Lists[key] = temp
+	lpush.Store.keyVersion[key]++
 	total := len(temp.listleft) + len(temp.listright)
 
 	lpush.Store.syncmut.Unlock()
@@ -326,6 +356,11 @@ func (lpush LPushCommand) Execute(args []string) string {
 
 func (lpop LPopCommand) Execute(args []string) string {
 	key := args[1]
+
+	// lpop.Store.syncmut.Lock()
+	lpop.Store.syncmut.Lock()
+    defer lpop.Store.syncmut.Unlock()
+
 	var lft int = 1
 	if len(args) > 2 {
 		lft, _ = strconv.Atoi(args[2])
@@ -360,6 +395,9 @@ func (lpop LPopCommand) Execute(args []string) string {
 		lpop.Store.Lists[key] = temp
 	}
 
+	lpop.Store.keyVersion[key]++
+	// lpop.Store.syncmut.Unlock()
+	
 	var builder strings.Builder
 	if len(popkey) == 1 {
 		return fmt.Sprintf("$%d\r\n%s\r\n", len(popkey[0]), popkey[0])
@@ -613,7 +651,6 @@ func (xadd XADDCommand) Execute(args []string) string {
 	stream.TopId_time = ms
 	stream.TopId_seq = seq
 
-
 	waiters := append([]chan struct{}(nil), xadd.Store.StreamWaiters[key]...)
 
 	for _, ch := range waiters {
@@ -622,7 +659,7 @@ func (xadd XADDCommand) Execute(args []string) string {
 		default:
 		}
 	}
-
+	xadd.Store.keyVersion[key]++
 	delete(xadd.Store.StreamWaiters, key)
 
 	return encodeBulkString(finalID)
@@ -762,13 +799,13 @@ func (cmd XREADCommand) Execute(args []string) string {
 	if len(args) < 4 {
 		return "-ERR wrong number of arguments\r\n"
 	}
-	i:=1
-	block:=false
+	i := 1
+	block := false
 	var timeout time.Duration
 
 	if strings.ToUpper(args[i]) == "BLOCK" {
-		block=true
-		ms, _:=strconv.Atoi(args[i+1])
+		block = true
+		ms, _ := strconv.Atoi(args[i+1])
 
 		if ms == 0 {
 			timeout = 0 // special case: infinite
@@ -776,7 +813,7 @@ func (cmd XREADCommand) Execute(args []string) string {
 			timeout = time.Duration(ms) * time.Millisecond
 		}
 		// timeout = time.Duration(ms)*time.Millisecond
-		i+=2
+		i += 2
 	}
 
 	if strings.ToUpper(args[i]) != "STREAMS" {
@@ -794,7 +831,7 @@ func (cmd XREADCommand) Execute(args []string) string {
 	n := total / 2
 
 	keys := args[i : i+n]
-	ids  := args[i+n : i+2*n]
+	ids := args[i+n : i+2*n]
 
 	for i := 0; i < n; i++ {
 		if ids[i] == "$" {
@@ -859,7 +896,7 @@ func (cmd XREADCommand) Execute(args []string) string {
 			}
 		}
 		return encodeMultiStream(newData)
-	}else {	
+	} else {
 		select {
 		case <-ch:
 			// re-run read after wakeup
@@ -879,7 +916,7 @@ func (cmd XREADCommand) Execute(args []string) string {
 			}
 
 			return encodeMultiStream(newData)
-			case <-time.After(timeout):
+		case <-time.After(timeout):
 
 			cmd.Store.syncmut.Lock()
 			for _, key := range keys {
@@ -921,41 +958,40 @@ func xreadfunc(store *DataStore, key string, lastID string) []StreamEntry {
 }
 
 func encodeXRead(key string, entries []StreamEntry) string {
-    if len(entries) == 0 {
-        return "*0\r\n"
-    }
+	if len(entries) == 0 {
+		return "*0\r\n"
+	}
 
-    var b strings.Builder
+	var b strings.Builder
 
-    // 1 stream
-    b.WriteString("*1\r\n")
+	// 1 stream
+	b.WriteString("*1\r\n")
 
-    // [key, entries]
-    b.WriteString("*2\r\n")
+	// [key, entries]
+	b.WriteString("*2\r\n")
 
-    // key
-    b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(key), key))
+	// key
+	b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(key), key))
 
-    // entries array
-    b.WriteString(fmt.Sprintf("*%d\r\n", len(entries)))
+	// entries array
+	b.WriteString(fmt.Sprintf("*%d\r\n", len(entries)))
 
-    for _, e := range entries {
-        b.WriteString("*2\r\n")
+	for _, e := range entries {
+		b.WriteString("*2\r\n")
 
-        // ID
-        b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(e.ID), e.ID))
+		// ID
+		b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(e.ID), e.ID))
 
-        // fields
-        b.WriteString(fmt.Sprintf("*%d\r\n", len(e.Fields)))
+		// fields
+		b.WriteString(fmt.Sprintf("*%d\r\n", len(e.Fields)))
 
-        for _, f := range e.Fields {
-            b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f), f))
-        }
-    }
+		for _, f := range e.Fields {
+			b.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(f), f))
+		}
+	}
 
-    return b.String()
+	return b.String()
 }
-
 
 func encodeMultiStream(data []struct {
 	key     string
@@ -1003,17 +1039,18 @@ func encodeMultiStream(data []struct {
 // }
 
 type Client struct {
-    conn net.Conn
-    tx   *TxContext
-	store *DataStore  
+	conn    net.Conn
+	tx      *TxContext
+	store   *DataStore
+	watched map[string]int64
 }
 
-type TxContext struct{
+type TxContext struct {
 	commandqueue [][]string
 }
 
 // func handleCommand(registry map[string]Command, args []string) string {
-func executeDirect(registry map[string]Command, args []string) string{
+func executeDirect(registry map[string]Command, args []string) string {
 	if len(args) == 0 {
 		return "-ERR unknown command\r\n"
 	}
@@ -1022,9 +1059,9 @@ func executeDirect(registry map[string]Command, args []string) string{
 
 	handler, ok := registry[command]
 	if !ok {
-    		return "-ERR unknown command\r\n"
-		}
-		
+		return "-ERR unknown command\r\n"
+	}
+
 	if arityCmd, ok := handler.(ArityChecker); ok {
 		if len(args) != arityCmd.Arity() {
 			return "-ERR wrong number of arguments\r\n"
@@ -1046,51 +1083,81 @@ func encodeEXECArray(input []string) string {
 }
 
 func handleCommand(client *Client, registry map[string]Command, args []string) string {
-    if len(args) == 0 {
-        return "-ERR unknown command\r\n"
-    }
+	if len(args) == 0 {
+		return "-ERR unknown command\r\n"
+	}
 
-    cmd := strings.ToUpper(args[0])
+	cmd := strings.ToUpper(args[0])
 
-    switch cmd {
+	switch cmd {
 
-    case "MULTI":
-        if client.tx != nil {
-            return "-ERR MULTI calls can not be nested\r\n"
-        }
-        client.tx = &TxContext{}
-        return "+OK\r\n"
+	case "MULTI":
+		if client.tx != nil {
+			return "-ERR MULTI calls can not be nested\r\n"
+		}
+		client.tx = &TxContext{}
+		return "+OK\r\n"
 
-    case "EXEC":
-        if client.tx == nil {
-            return "-ERR EXEC without MULTI\r\n"
-        }
-		client.store.syncmut.Lock()   
-    	defer client.store.syncmut.Unlock()
+	case "EXEC":
+		if client.tx == nil {
+			return "-ERR EXEC without MULTI\r\n"
+		}
+		client.store.syncmut.Lock()
+		defer client.store.syncmut.Unlock()
 
-        var responses []string
+		for key, version := range client.watched {
+			if client.store.keyVersion[key] != version {
+				client.tx = nil
+				client.watched = nil
+				return "*-1\r\n" // abort transaction
+			}
+		}
 
-        for _, queued := range client.tx.commandqueue {
-            responses = append(responses, executeDirect(registry, queued))
-        }
+		var responses []string
 
-        client.tx = nil
+		for _, queued := range client.tx.commandqueue {
+			responses = append(responses, executeDirect(registry, queued))
+		}
+		client.watched = nil
+		client.tx = nil
 
-        return encodeEXECArray(responses)
+		return encodeEXECArray(responses)
 
-    case "DISCARD":
-        if client.tx == nil {
-            return "-ERR DISCARD without MULTI\r\n"
-        }
-        client.tx = nil
-        return "+OK\r\n"
-    }
+	case "DISCARD":
+		if client.tx == nil {
+			return "-ERR DISCARD without MULTI\r\n"
+		}
+		client.watched = nil
+		client.tx = nil
+		return "+OK\r\n"
+	
+	case "WATCH":
+		if client.tx != nil {
+			return "-ERR WATCH inside MULTI is not allowed\r\n"
+		}
 
-    // If inside MULTI → queue instead of execute
-    if client.tx != nil {
-        client.tx.commandqueue = append(client.tx.commandqueue, args)
-        return "+QUEUED\r\n"
-    }
+		if client.watched == nil {
+			client.watched = make(map[string]int64)
+		}
 
-    return executeDirect(registry, args)
+		client.store.syncmut.Lock()
+		defer client.store.syncmut.Unlock()
+
+		for i := 1; i < len(args); i++ {
+			key := args[i]
+			client.watched[key] = client.store.keyVersion[key]
+		}
+		return "+OK\r\n"
+	case "UNWATCH":
+		client.watched = nil
+		return "+OK\r\n"
+	}
+
+	// If inside MULTI → queue instead of execute
+	if client.tx != nil {
+		client.tx.commandqueue = append(client.tx.commandqueue, args)
+		return "+QUEUED\r\n"
+	}
+
+	return executeDirect(registry, args)
 }
