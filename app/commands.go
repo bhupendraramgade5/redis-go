@@ -191,8 +191,12 @@ func (set SetCommand) Execute(args []string) string {
 		expiresAt: expiresAt,
 	}
 	fmt.Println("SetCommand : Check", set.Store.KV[key], set.Store.keyVersion[key])
-	fmt.Printf("key = [%s]\n", key)
 	set.Store.keyVersion[key]++
+	fmt.Println("set.Store.keyVersion[key]++ :", set.Store.keyVersion[key])
+	// fmt.Printf("WATCH KEY BYTES: %v\n", []byte(key))
+	fmt.Printf("SET KEY BYTES: %v\n", []byte(key))
+	fmt.Printf("key = [%s]\n", key)
+	// set.Store.keyVersion[key]++
 
 	return "+OK\r\n"
 }
@@ -1104,18 +1108,25 @@ func handleCommand(client *Client, registry map[string]Command, args []string) s
 				"Expected:", version,
 				"Actual:", client.store.keyVersion[key],
 			)
+			fmt.Printf("WATCH KEY BYTES: %v\n", []byte(key))
 		}
+
 		client.store.syncmut.Lock()
 		defer client.store.syncmut.Unlock()
 
 		for key, version := range client.watched {
+			// fmt.Println("Debug : ", client.store.keyVersion[key], version)
+			fmt.Println("Key:", key, "Expected:", version, 
+                    "Actual:", client.store.keyVersion[key])
+			// fmt.Printf("WATCH KEY BYTES: %v\n", []byte(key))
+			fmt.Printf("EXEC KEY BYTES: %v\n", []byte(key))
 			if client.store.keyVersion[key] != version {
-				fmt.Println("Debug : ", client.store.keyVersion[key], version)
 				client.tx = nil
 				client.watched = nil
 				return "*-1\r\n" // abort transaction
 			}
 		}
+
 
 		var responses []string
 
@@ -1142,7 +1153,7 @@ func handleCommand(client *Client, registry map[string]Command, args []string) s
 
 		client.store.syncmut.Lock()
 		defer client.store.syncmut.Unlock()
-
+		
 		if client.tx != nil {
 			return "-ERR WATCH inside MULTI is not allowed\r\n"
 		}
@@ -1156,7 +1167,7 @@ func handleCommand(client *Client, registry map[string]Command, args []string) s
 			key := args[i]
 			client.watched[key] = client.store.keyVersion[key]
 			fmt.Println("WATCH SET:", key, client.watched[key])
-
+			fmt.Printf("WATCH KEY BYTES: %v\n", []byte(key))
 			fmt.Println("Debug: ", "client.store.keyVersion[key]:-", client.store.keyVersion[key])
 			fmt.Println("Debug :", "client.watched:-", client.watched[key])
 		}

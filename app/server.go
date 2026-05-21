@@ -5,8 +5,9 @@ import (
 	"net"
 )
 
-func consumeListener(l net.Listener, registry map[string]Command) {
-	store := NewStore()
+// func consumeListener(l net.Listener, registry map[string]Command) {
+func consumeListener(l net.Listener, registry map[string]Command, store *DataStore){
+	// store := NewStore()
 	for {
 		connection, err := l.Accept()
 
@@ -42,8 +43,23 @@ func handleConnection(connection net.Conn, registry map[string]Command, store *D
 		commands, remaining := parseRESP(buffer)
 		buffer = remaining // keep leftover
 
+
+		// for _, cmd := range commands {
+		// 	response := handleCommand(client, registry, cmd)
+		// 	connection.Write([]byte(response))
+		// }
+
 		for _, cmd := range commands {
-			response := handleCommand(client, registry, cmd)
+
+			respChan := make(chan string)
+
+			commandQueue <- Task{
+				client:   client,
+				command:  cmd,
+				respChan: respChan,
+			}
+
+			response := <-respChan
 			connection.Write([]byte(response))
 		}
 	}
